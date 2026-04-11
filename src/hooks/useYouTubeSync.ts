@@ -7,7 +7,17 @@ export type SyncMessage =
   | { type: "play"; time: number }
   | { type: "pause"; time: number }
   | { type: "seek"; time: number }
-  | { type: "panel-update"; id: PanelId; state: PanelState };
+  | { type: "panel-update"; id: PanelId; state: PanelState }
+  | {
+      type: "draw";
+      x0: number;
+      y0: number;
+      x1: number;
+      y1: number;
+      color: string;
+      width: number;
+    }
+  | { type: "draw-clear" };
 
 interface UseYouTubeSyncOptions {
   dataConnection: DataConnection | null;

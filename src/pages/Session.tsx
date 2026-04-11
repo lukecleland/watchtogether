@@ -3,8 +3,14 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { VideoPanel } from "../components/VideoPanel";
 import { YoutubeWidget } from "../components/YoutubeWidget";
 import { DraggablePanel } from "../components/DraggablePanel";
+import {
+  Whiteboard,
+  type WhiteboardHandle,
+  type WhiteboardStroke,
+} from "../components/Whiteboard";
+import { WhiteboardToolbar } from "../components/WhiteboardToolbar";
 import { usePeer } from "../hooks/usePeer";
-import { useYouTubeSync } from "../hooks/useYouTubeSync";
+import { useYouTubeSync, type SyncMessage } from "../hooks/useYouTubeSync";
 import type { PanelId, PanelState } from "../types/panels";
 
 interface SessionProps {
@@ -35,6 +41,12 @@ export function Session({ roomCode, isHost }: SessionProps) {
   // Tracks the highest z-index currently in use so we can raise panels on click
   const topZRef = useRef(20);
 
+  // Whiteboard
+  const whiteboardRef = useRef<WhiteboardHandle>(null);
+  const [wbTool, setWbTool] = useState<"pen" | "eraser">("pen");
+  const [wbColor, setWbColor] = useState("#ffffff");
+  const [wbWidth, setWbWidth] = useState(3);
+
   const { remoteStream, dataConnection, status, error } = usePeer({
     roomCode,
     isHost,
@@ -42,30 +54,30 @@ export function Session({ roomCode, isHost }: SessionProps) {
   });
 
   // Panel sync — wired to the same data channel as YouTube sync
-  const handleRemoteSync = useCallback(
-    (msg: { type: string; id?: PanelId; state?: PanelState }) => {
-      if (msg.type === "panel-update" && msg.id && msg.state) {
-        // Swap local ↔ remote so each user's "You" controls the other's "Guest" and vice versa.
-        // YouTube panel is symmetric — no swap needed.
-        const targetId: PanelId =
-          msg.id === "local"
-            ? "remote"
-            : msg.id === "remote"
-              ? "local"
-              : "youtube";
-        setPanels((prev) => ({ ...prev, [targetId]: msg.state! }));
-      }
-      // YouTube-specific messages are handled inside YoutubeWidget via its own useYouTubeSync
-    },
-    [],
-  );
+  const handleRemoteSync = useCallback((msg: SyncMessage) => {
+    if (msg.type === "panel-update") {
+      // Swap local ↔ remote so each user's "You" controls the other's "Guest" and vice versa.
+      // YouTube panel is symmetric — no swap needed.
+      const targetId: PanelId =
+        msg.id === "local"
+          ? "remote"
+          : msg.id === "remote"
+            ? "local"
+            : "youtube";
+      setPanels((prev) => ({ ...prev, [targetId]: msg.state }));
+    } else if (msg.type === "draw") {
+      whiteboardRef.current?.drawStroke(msg);
+    } else if (msg.type === "draw-clear") {
+      whiteboardRef.current?.clearCanvas();
+    }
+    // YouTube-specific messages are handled inside YoutubeWidget via its own useYouTubeSync
+  }, []);
 
-  // We use useYouTubeSync here only to route panel-update messages.
+  // We use useYouTubeSync here to route panel-update and whiteboard messages.
   // YoutubeWidget mounts its own useYouTubeSync instance for YT playback messages.
   const { sendSync } = useYouTubeSync({
     dataConnection,
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    onRemoteSync: handleRemoteSync as any,
+    onRemoteSync: handleRemoteSync,
   });
 
   const sendPanelUpdate = useCallback(
@@ -74,6 +86,18 @@ export function Session({ roomCode, isHost }: SessionProps) {
     },
     [sendSync],
   );
+
+  const handleWbStroke = useCallback(
+    (stroke: WhiteboardStroke) => {
+      sendSync({ type: "draw", ...stroke });
+    },
+    [sendSync],
+  );
+
+  const handleWbClear = useCallback(() => {
+    whiteboardRef.current?.clearCanvas();
+    sendSync({ type: "draw-clear" });
+  }, [sendSync]);
 
   const bringToFront = useCallback(
     (id: PanelId) => {
@@ -146,7 +170,7 @@ export function Session({ roomCode, isHost }: SessionProps) {
   }
 
   return (
-    <div className="relative w-screen h-screen bg-zinc-950 overflow-hidden">
+    <div className="relative w-screen h-screen overflow-hidden">
       {/* Top bar — fixed overlay, not part of draggable canvas */}
       <div className="absolute top-0 left-0 right-0 z-50 flex items-center justify-between px-4 h-12 bg-zinc-950/90 backdrop-blur-sm border-b border-zinc-800/60">
         <div className="flex items-center gap-3">
@@ -196,6 +220,26 @@ export function Session({ roomCode, isHost }: SessionProps) {
           {error}
         </div>
       )}
+
+      {/* Whiteboard canvas — sits below all panels */}
+      <Whiteboard
+        ref={whiteboardRef}
+        tool={wbTool}
+        color={wbColor}
+        width={wbWidth}
+        onStroke={handleWbStroke}
+      />
+
+      {/* Whiteboard toolbar */}
+      <WhiteboardToolbar
+        tool={wbTool}
+        color={wbColor}
+        width={wbWidth}
+        onToolChange={setWbTool}
+        onColorChange={setWbColor}
+        onWidthChange={setWbWidth}
+        onClear={handleWbClear}
+      />
 
       {/* Free-form panel canvas */}
       <DraggablePanel
