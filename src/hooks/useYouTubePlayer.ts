@@ -1,0 +1,154 @@
+import { useEffect, useRef, useCallback, type RefObject } from "react";
+
+// ----- Minimal YT types (avoids needing @types/youtube) -----
+interface YTPlayer {
+  playVideo(): void;
+  pauseVideo(): void;
+  seekTo(seconds: number, allowSeekAhead: boolean): void;
+  getCurrentTime(): number;
+  loadVideoById(videoId: string): void;
+  destroy(): void;
+}
+
+interface YTPlayerOptions {
+  width?: string | number;
+  height?: string | number;
+  playerVars?: Record<string, unknown>;
+  events?: {
+    onReady?: (event: { target: YTPlayer }) => void;
+    onStateChange?: (event: { data: number; target: YTPlayer }) => void;
+  };
+}
+
+declare global {
+  interface Window {
+    YT?: {
+      Player: new (
+        element: HTMLElement | string,
+        options: YTPlayerOptions,
+      ) => YTPlayer;
+    };
+    onYouTubeIframeAPIReady?: () => void;
+  }
+}
+
+// Singleton loader — the iframe_api script is never added twice
+let apiPromise: Promise<void> | null = null;
+
+function ensureYouTubeAPI(): Promise<void> {
+  if (apiPromise) return apiPromise;
+  if (window.YT?.Player) return (apiPromise = Promise.resolve());
+  apiPromise = new Promise((resolve) => {
+    const prev = window.onYouTubeIframeAPIReady;
+    window.onYouTubeIframeAPIReady = () => {
+      prev?.();
+      resolve();
+    };
+    const script = document.createElement("script");
+    script.src = "https://www.youtube.com/iframe_api";
+    document.head.appendChild(script);
+  });
+  return apiPromise;
+}
+
+// -----
+
+interface UseYouTubePlayerOptions {
+  /**
+   * Called when the player's state changes.
+   * `getCurrentTime` is a function you call to get the current timestamp
+   * (avoids holding a stale player reference in the callback closure).
+   */
+  onStateChange?: (state: number, getCurrentTime: () => number) => void;
+}
+
+export function useYouTubePlayer(
+  containerRef: RefObject<HTMLDivElement | null>,
+  options: UseYouTubePlayerOptions = {},
+) {
+  const playerRef = useRef<YTPlayer | null>(null);
+  const pendingVideoRef = useRef<string | null>(null);
+  // Always read the latest callback without re-creating the player
+  const onStateChangeRef = useRef(options.onStateChange);
+  onStateChangeRef.current = options.onStateChange;
+
+  useEffect(() => {
+    // containerRef.current is stable for the lifetime of the widget
+    const container = containerRef.current;
+    if (!container) return;
+
+    // YT.Player replaces the target element with an iframe.
+    // Use a child div so our container div stays intact.
+    const div = document.createElement("div");
+    container.appendChild(div);
+
+    let player: YTPlayer | null = null;
+    let cancelled = false;
+
+    ensureYouTubeAPI().then(() => {
+      if (cancelled || !window.YT?.Player) return;
+
+      player = new window.YT.Player(div, {
+        width: "100%",
+        height: "100%",
+        playerVars: {
+          autoplay: 0,
+          modestbranding: 1,
+          rel: 0,
+          // Tells YouTube the exact origin allowed to communicate with the player.
+          // This prevents the postMessage "target origin mismatch" error.
+          origin: window.location.origin,
+        },
+        events: {
+          onReady: ({ target }) => {
+            if (cancelled) return;
+            playerRef.current = target;
+            // Apply any video that was requested before the player was ready
+            if (pendingVideoRef.current) {
+              target.loadVideoById(pendingVideoRef.current);
+              pendingVideoRef.current = null;
+            }
+          },
+          onStateChange: ({ data, target }) => {
+            if (cancelled) return;
+            onStateChangeRef.current?.(data, () => target.getCurrentTime());
+          },
+        },
+      });
+    });
+
+    return () => {
+      cancelled = true;
+      try {
+        player?.destroy();
+      } catch {
+        /* ignore errors during teardown */
+      }
+      playerRef.current = null;
+      if (container.contains(div)) container.removeChild(div);
+    };
+    // containerRef is a stable ref object — safe to omit from deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const loadVideo = useCallback((videoId: string) => {
+    if (playerRef.current) {
+      playerRef.current.loadVideoById(videoId);
+    } else {
+      // Player not ready yet — queue and apply in onReady
+      pendingVideoRef.current = videoId;
+    }
+  }, []);
+
+  const playVideo = useCallback(() => {
+    playerRef.current?.playVideo();
+  }, []);
+  const pauseVideo = useCallback(() => {
+    playerRef.current?.pauseVideo();
+  }, []);
+  const seekTo = useCallback((seconds: number) => {
+    playerRef.current?.seekTo(seconds, true);
+  }, []);
+
+  return { loadVideo, playVideo, pauseVideo, seekTo };
+}
