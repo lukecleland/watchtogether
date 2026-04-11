@@ -1,11 +1,13 @@
 import { useCallback, useRef } from "react";
 import type { DataConnection } from "peerjs";
+import type { PanelId, PanelState } from "../types/panels";
 
 export type SyncMessage =
   | { type: "load"; videoId: string }
   | { type: "play"; time: number }
   | { type: "pause"; time: number }
-  | { type: "seek"; time: number };
+  | { type: "seek"; time: number }
+  | { type: "panel-update"; id: PanelId; state: PanelState };
 
 interface UseYouTubeSyncOptions {
   dataConnection: DataConnection | null;
@@ -30,7 +32,6 @@ export function useYouTubeSync({
   if (dataConnection && boundRef.current !== dataConnection) {
     boundRef.current = dataConnection;
     dataConnection.on("data", (raw) => {
-      console.log(`[SYNC] received from peer:`, raw);
       onRemoteSyncRef.current(raw as SyncMessage);
     });
   }
@@ -38,7 +39,6 @@ export function useYouTubeSync({
   const sendSync = useCallback(
     (msg: SyncMessage) => {
       if (dataConnection?.open) {
-        console.log(`[SYNC] sending to peer:`, msg);
         dataConnection.send(msg);
       }
     },

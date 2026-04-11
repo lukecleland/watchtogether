@@ -66,7 +66,7 @@ export function usePeer({
   useEffect(() => {
     if (!localStream) return;
 
-    const peerId = isHost ? roomCode : undefined;
+    const peerId = isHost ? roomCode.toLowerCase() : undefined;
     const peer = new Peer(peerId as string, {
       debug: 0,
     });
@@ -87,10 +87,10 @@ export function usePeer({
         });
       } else {
         // Guest: connect data channel then call
-        const conn = peer.connect(roomCode, { reliable: true });
+        const conn = peer.connect(roomCode.toLowerCase(), { reliable: true });
         setupDataConn(conn);
 
-        const call = peer.call(roomCode, localStream);
+        const call = peer.call(roomCode.toLowerCase(), localStream);
         setupCall(call, localStream);
       }
     });

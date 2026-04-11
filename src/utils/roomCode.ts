@@ -1,13 +1,9 @@
-const CHARS = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+import { WORDS } from "./wordList";
 
 export function generateCode(): string {
-  let code = "";
-  const array = new Uint8Array(8);
+  const array = new Uint32Array(1);
   crypto.getRandomValues(array);
-  for (const byte of array) {
-    code += CHARS[byte % CHARS.length];
-  }
-  return code;
+  return WORDS[array[0] % WORDS.length].toUpperCase();
 }
 
 export function getCodeFromURL(): string | null {

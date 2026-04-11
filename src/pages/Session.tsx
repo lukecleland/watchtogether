@@ -1,22 +1,98 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 
-import { VideoGrid } from "../components/VideoGrid";
+import { VideoPanel } from "../components/VideoPanel";
 import { YoutubeWidget } from "../components/YoutubeWidget";
+import { DraggablePanel } from "../components/DraggablePanel";
 import { usePeer } from "../hooks/usePeer";
+import { useYouTubeSync } from "../hooks/useYouTubeSync";
+import type { PanelId, PanelState } from "../types/panels";
 
 interface SessionProps {
   roomCode: string;
   isHost: boolean;
 }
 
+function defaultPanels(): Record<PanelId, PanelState> {
+  const vw = window.innerWidth;
+  const vh = window.innerHeight;
+  const videoW = Math.min(420, Math.floor((vw - 80) / 2));
+  const videoH = Math.round((videoW * 9) / 16);
+  const topY = 56; // below the top bar
+  return {
+    // "You" starts on the right, "Guest" on the left.
+    // With local↔remote sync swap, both users see their own panel in the same spot.
+    local: { x: videoW + 40, y: topY, width: videoW, height: videoH, z: 10 },
+    remote: { x: 20, y: topY, width: videoW, height: videoH, z: 10 },
+    youtube: { x: vw - 340, y: vh - 280, width: 320, height: 260, z: 20 },
+  };
+}
+
 export function Session({ roomCode, isHost }: SessionProps) {
   const [localStream, setLocalStream] = useState<MediaStream | null>(null);
   const [mediaError, setMediaError] = useState<string | null>(null);
+  const [panels, setPanels] =
+    useState<Record<PanelId, PanelState>>(defaultPanels);
+  // Tracks the highest z-index currently in use so we can raise panels on click
+  const topZRef = useRef(20);
 
   const { remoteStream, dataConnection, status, error } = usePeer({
     roomCode,
     isHost,
     localStream,
+  });
+
+  // Panel sync — wired to the same data channel as YouTube sync
+  const handleRemoteSync = useCallback(
+    (msg: { type: string; id?: PanelId; state?: PanelState }) => {
+      if (msg.type === "panel-update" && msg.id && msg.state) {
+        // Swap local ↔ remote so each user's "You" controls the other's "Guest" and vice versa.
+        // YouTube panel is symmetric — no swap needed.
+        const targetId: PanelId =
+          msg.id === "local"
+            ? "remote"
+            : msg.id === "remote"
+              ? "local"
+              : "youtube";
+        setPanels((prev) => ({ ...prev, [targetId]: msg.state! }));
+      }
+      // YouTube-specific messages are handled inside YoutubeWidget via its own useYouTubeSync
+    },
+    [],
+  );
+
+  // We use useYouTubeSync here only to route panel-update messages.
+  // YoutubeWidget mounts its own useYouTubeSync instance for YT playback messages.
+  const { sendSync } = useYouTubeSync({
+    dataConnection,
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    onRemoteSync: handleRemoteSync as any,
+  });
+
+  const sendPanelUpdate = useCallback(
+    (id: PanelId, state: PanelState) => {
+      sendSync({ type: "panel-update", id, state });
+    },
+    [sendSync],
+  );
+
+  const bringToFront = useCallback(
+    (id: PanelId) => {
+      const nextZ = ++topZRef.current;
+      setPanels((prev) => {
+        const next = { ...prev, [id]: { ...prev[id], z: nextZ } };
+        // Sync immediately so the remote peer sees the z-order change
+        sendPanelUpdate(id, next[id]);
+        return next;
+      });
+    },
+    [sendPanelUpdate],
+  );
+
+  const makePanelHandlers = (id: PanelId) => ({
+    onLocalUpdate: (next: PanelState) =>
+      setPanels((prev) => ({ ...prev, [id]: next })),
+    onSyncUpdate: (next: PanelState) => sendPanelUpdate(id, next),
+    onBringToFront: () => bringToFront(id),
   });
 
   useEffect(() => {
@@ -70,11 +146,11 @@ export function Session({ roomCode, isHost }: SessionProps) {
   }
 
   return (
-    <div className="relative min-h-screen bg-zinc-950 flex flex-col p-4 gap-4">
-      {/* Top bar */}
-      <div className="flex items-center justify-between shrink-0">
+    <div className="relative w-screen h-screen bg-zinc-950 overflow-hidden">
+      {/* Top bar — fixed overlay, not part of draggable canvas */}
+      <div className="absolute top-0 left-0 right-0 z-50 flex items-center justify-between px-4 h-12 bg-zinc-950/90 backdrop-blur-sm border-b border-zinc-800/60">
         <div className="flex items-center gap-3">
-          <span className="text-white font-bold text-lg tracking-tight">
+          <span className="text-white font-bold text-base tracking-tight">
             watchtogether
           </span>
           <span
@@ -116,18 +192,41 @@ export function Session({ roomCode, isHost }: SessionProps) {
 
       {/* Error banner */}
       {error && (
-        <div className="bg-red-950/60 border border-red-700 rounded-xl px-4 py-2.5 text-red-300 text-sm shrink-0">
+        <div className="absolute top-14 left-4 right-4 z-50 bg-red-950/60 border border-red-700 rounded-xl px-4 py-2.5 text-red-300 text-sm">
           {error}
         </div>
       )}
 
-      {/* Video area */}
-      <div className="flex-1 min-h-0">
-        <VideoGrid localStream={localStream} remoteStream={remoteStream} />
-      </div>
+      {/* Free-form panel canvas */}
+      <DraggablePanel
+        state={panels.local}
+        {...makePanelHandlers("local")}
+        minWidth={200}
+        minHeight={120}
+        className="z-10"
+      >
+        <VideoPanel stream={localStream} label="You" muted />
+      </DraggablePanel>
 
-      {/* Floating YouTube widget — rendered inside the relative container */}
-      <YoutubeWidget dataConnection={dataConnection} />
+      <DraggablePanel
+        state={panels.remote}
+        {...makePanelHandlers("remote")}
+        minWidth={200}
+        minHeight={120}
+        className="z-10"
+      >
+        <VideoPanel stream={remoteStream} label="Guest" />
+      </DraggablePanel>
+
+      <DraggablePanel
+        state={panels.youtube}
+        {...makePanelHandlers("youtube")}
+        minWidth={280}
+        minHeight={160}
+        className="z-20"
+      >
+        <YoutubeWidget dataConnection={dataConnection} />
+      </DraggablePanel>
     </div>
   );
 }
