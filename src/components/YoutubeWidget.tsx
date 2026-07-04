@@ -1,10 +1,31 @@
-import { useState, useRef, useCallback } from "react";
+import { useState, useRef, useCallback, useEffect } from "react";
 import { useYouTubeSync, type SyncMessage } from "../hooks/useYouTubeSync";
 import { useYouTubePlayer } from "../hooks/useYouTubePlayer";
 import type { DataConnection } from "peerjs";
 
+/**
+ * YoutubeWidget — YouTube player with URL input and bidirectional sync.
+ *
+ * ## Sync flow (outbound)
+ * User actions (play/pause/seek) → `handleStateChange` → `sendSync`
+ *
+ * ## Sync flow (inbound)
+ * Remote message → `handleRemoteSync` → `seekTo` + `playVideo`/`pauseVideo`
+ *
+ * ## Echo prevention
+ * Calling `seekTo()` and then `playVideo()` causes the YT IFrame API to fire
+ * `onStateChange` events, which would echo back to the remote peer. A
+ * timestamp-based guard (`syncUntilRef`) suppresses all state events for 500 ms
+ * after any remote-triggered command, regardless of how many intermediate
+ * states (buffering, seeking) the player emits before settling.
+ */
+
 interface YoutubeWidgetProps {
   dataConnection: DataConnection | null;
+  initialVideoId?: string;
+  onClose?: () => void;
+  /** 0–1 spatial volume multiplier updated by the parent on every canvas transform change. */
+  spatialVolume?: number;
 }
 
 function parseVideoId(input: string): string | null {
@@ -21,7 +42,12 @@ function parseVideoId(input: string): string | null {
   return null;
 }
 
-export function YoutubeWidget({ dataConnection }: YoutubeWidgetProps) {
+export function YoutubeWidget({
+  dataConnection,
+  initialVideoId,
+  onClose,
+  spatialVolume = 1,
+}: YoutubeWidgetProps) {
   const [hasVideo, setHasVideo] = useState(false);
   const [inputValue, setInputValue] = useState("");
   const [minimised, setMinimised] = useState(false);
@@ -50,10 +76,23 @@ export function YoutubeWidget({ dataConnection }: YoutubeWidgetProps) {
     [],
   );
 
-  const { loadVideo, playVideo, pauseVideo, seekTo } = useYouTubePlayer(
-    playerContainerRef,
-    { onStateChange: handleStateChange },
-  );
+  const { loadVideo, playVideo, pauseVideo, seekTo, setVolume } =
+    useYouTubePlayer(playerContainerRef, { onStateChange: handleStateChange });
+
+  // Keep YouTube player volume in sync with spatial positioning
+  useEffect(() => {
+    setVolume(spatialVolume * 100);
+  }, [spatialVolume, setVolume]);
+
+  // Auto-load if created with an initial video ID (e.g. from a background URL drop)
+  useEffect(() => {
+    if (initialVideoId) {
+      setHasVideo(true);
+      loadVideo(initialVideoId);
+    }
+    // Only on mount
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const handleRemoteSync = useCallback(
     (msg: SyncMessage) => {
@@ -126,41 +165,64 @@ export function YoutubeWidget({ dataConnection }: YoutubeWidgetProps) {
             Watch Together
           </span>
         </div>
-        <button
-          onClick={() => setMinimised((m) => !m)}
-          className="text-zinc-400 hover:text-white transition-colors"
-          aria-label={minimised ? "Expand" : "Minimise"}
-        >
-          {minimised ? (
-            <svg
-              className="w-4 h-4"
-              fill="none"
-              stroke="currentColor"
-              viewBox="0 0 24 24"
+        <div className="flex items-center gap-1">
+          <button
+            onClick={() => setMinimised((m) => !m)}
+            className="text-zinc-400 hover:text-white transition-colors"
+            aria-label={minimised ? "Expand" : "Minimise"}
+          >
+            {minimised ? (
+              <svg
+                className="w-4 h-4"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M4 8h16M4 16h16"
+                />
+              </svg>
+            ) : (
+              <svg
+                className="w-4 h-4"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M20 12H4"
+                />
+              </svg>
+            )}
+          </button>
+          {onClose && (
+            <button
+              onClick={onClose}
+              className="text-zinc-500 hover:text-red-400 transition-colors"
+              aria-label="Close"
             >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M4 8h16M4 16h16"
-              />
-            </svg>
-          ) : (
-            <svg
-              className="w-4 h-4"
-              fill="none"
-              stroke="currentColor"
-              viewBox="0 0 24 24"
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M20 12H4"
-              />
-            </svg>
+              <svg
+                className="w-4 h-4"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M6 18L18 6M6 6l12 12"
+                />
+              </svg>
+            </button>
           )}
-        </button>
+        </div>
       </div>
 
       {!minimised && (

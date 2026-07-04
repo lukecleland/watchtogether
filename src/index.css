@@ -1,1 +1,25 @@
 @import "tailwindcss";
+
+html,
+body {
+  height: 100%;
+  overflow: hidden;
+  overscroll-behavior: none;
+  /* Disable iOS bounce / pull-to-refresh / elastic scrolling */
+  -webkit-overflow-scrolling: auto;
+  /* Prevent double-tap zoom and long-press context menus */
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+  /* Prevent text selection on touch */
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+#root {
+  height: 100%;
+  overflow: hidden;
+  position: fixed;
+  inset: 0;
+  /* Respect iOS home indicator / bottom safe area */
+  padding-bottom: env(safe-area-inset-bottom);
+}

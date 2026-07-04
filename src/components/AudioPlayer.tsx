@@ -1,0 +1,398 @@
+import { useState, useRef, useCallback, useEffect } from "react";
+
+function formatTime(seconds: number): string {
+  if (!isFinite(seconds)) return "0:00";
+  const m = Math.floor(seconds / 60);
+  const s = Math.floor(seconds % 60);
+  return `${m}:${s.toString().padStart(2, "0")}`;
+}
+
+export function AudioPlayer({
+  initialFile,
+  onClose,
+  spatialVolume = 1,
+}: {
+  initialFile?: File;
+  onClose?: () => void;
+  /** 0–1 multiplier from spatial positioning — updated by the parent on every canvas transform change. */
+  spatialVolume?: number;
+}) {
+  const audioRef = useRef<HTMLAudioElement>(null);
+  const objectUrlRef = useRef<string | null>(null);
+
+  const [fileName, setFileName] = useState<string | null>(null);
+  const [isPlaying, setIsPlaying] = useState(false);
+  const [currentTime, setCurrentTime] = useState(0);
+  const [duration, setDuration] = useState(0);
+  const [volume, setVolume] = useState(1);
+  const [minimised, setMinimised] = useState(false);
+  const [isDragOver, setIsDragOver] = useState(false);
+
+  const loadFile = useCallback((file: File) => {
+    if (!audioRef.current) return;
+    // Revoke previous object URL to free memory
+    if (objectUrlRef.current) URL.revokeObjectURL(objectUrlRef.current);
+    const url = URL.createObjectURL(file);
+    objectUrlRef.current = url;
+    audioRef.current.src = url;
+    audioRef.current.load();
+    setFileName(file.name.replace(/\.[^.]+$/, ""));
+    setCurrentTime(0);
+    setIsPlaying(false);
+    setMinimised(false);
+  }, []);
+
+  // Auto-load if created with a file (e.g. from a background drop)
+  useEffect(() => {
+    if (initialFile) loadFile(initialFile);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // ── File input ────────────────────────────────────────────────────────
+  const handleFileInput = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) loadFile(file);
+  };
+
+  // ── Drag and drop ─────────────────────────────────────────────────────
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (e.dataTransfer.types.includes("Files")) setIsDragOver(true);
+  };
+
+  const handleDragLeave = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragOver(false);
+  };
+
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragOver(false);
+    const file = e.dataTransfer.files[0];
+    if (!file) return;
+    if (!file.type.match(/audio\/(mpeg|wav|ogg|flac|aac|mp4)/)) return;
+    loadFile(file);
+  };
+
+  // ── Playback controls ─────────────────────────────────────────────────
+  const togglePlay = () => {
+    const audio = audioRef.current;
+    if (!audio || !fileName) return;
+    if (audio.paused) {
+      audio.play().catch(() => {});
+    } else {
+      audio.pause();
+    }
+  };
+
+  const handleSeek = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const audio = audioRef.current;
+    if (!audio) return;
+    const t = parseFloat(e.target.value);
+    audio.currentTime = t;
+    setCurrentTime(t);
+  };
+
+  const handleVolume = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const v = parseFloat(e.target.value);
+    setVolume(v);
+    if (audioRef.current)
+      audioRef.current.volume = Math.min(1, v * spatialVolume);
+  };
+
+  // Keep audio.volume in sync whenever spatialVolume changes from the parent
+  useEffect(() => {
+    if (audioRef.current)
+      audioRef.current.volume = Math.min(1, volume * spatialVolume);
+  }, [spatialVolume, volume]);
+
+  // ── Audio element events ──────────────────────────────────────────────
+  useEffect(() => {
+    const audio = audioRef.current;
+    if (!audio) return;
+
+    const onPlay = () => setIsPlaying(true);
+    const onPause = () => setIsPlaying(false);
+    const onEnded = () => setIsPlaying(false);
+    const onTimeUpdate = () => setCurrentTime(audio.currentTime);
+    const onDurationChange = () => setDuration(audio.duration);
+
+    audio.addEventListener("play", onPlay);
+    audio.addEventListener("pause", onPause);
+    audio.addEventListener("ended", onEnded);
+    audio.addEventListener("timeupdate", onTimeUpdate);
+    audio.addEventListener("durationchange", onDurationChange);
+
+    return () => {
+      audio.removeEventListener("play", onPlay);
+      audio.removeEventListener("pause", onPause);
+      audio.removeEventListener("ended", onEnded);
+      audio.removeEventListener("timeupdate", onTimeUpdate);
+      audio.removeEventListener("durationchange", onDurationChange);
+    };
+  }, []);
+
+  // Revoke object URL on unmount
+  useEffect(() => {
+    return () => {
+      if (objectUrlRef.current) URL.revokeObjectURL(objectUrlRef.current);
+    };
+  }, []);
+
+  const progress = duration > 0 ? (currentTime / duration) * 100 : 0;
+
+  return (
+    <div className="flex flex-col h-full bg-zinc-900 border border-zinc-700 rounded-2xl overflow-hidden">
+      {/* Hidden audio element */}
+      <audio ref={audioRef} preload="metadata" />
+
+      {/* Header / drag handle */}
+      <div className="drag-handle flex items-center justify-between px-3 py-2 bg-zinc-800 cursor-grab active:cursor-grabbing select-none shrink-0">
+        <div className="flex items-center gap-2">
+          {/* Music note icon */}
+          <svg
+            className="w-4 h-4 text-violet-400"
+            viewBox="0 0 24 24"
+            fill="currentColor"
+          >
+            <path d="M12 3v10.55A4 4 0 1014 17V7h4V3h-6z" />
+          </svg>
+          <span className="text-xs font-semibold text-zinc-300">
+            Audio Player
+          </span>
+        </div>
+        <div className="flex items-center gap-1">
+          <button
+            onClick={() => setMinimised((m) => !m)}
+            className="text-zinc-400 hover:text-white transition-colors"
+            aria-label={minimised ? "Expand" : "Minimise"}
+          >
+            {minimised ? (
+              <svg
+                className="w-4 h-4"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M4 8h16M4 16h16"
+                />
+              </svg>
+            ) : (
+              <svg
+                className="w-4 h-4"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M20 12H4"
+                />
+              </svg>
+            )}
+          </button>
+          {onClose && (
+            <button
+              onClick={onClose}
+              className="text-zinc-500 hover:text-red-400 transition-colors"
+              aria-label="Close"
+            >
+              <svg
+                className="w-4 h-4"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M6 18L18 6M6 6l12 12"
+                />
+              </svg>
+            </button>
+          )}
+        </div>
+      </div>
+
+      {!minimised && (
+        <div className="no-drag flex flex-col flex-1 gap-2 px-3 py-2 min-w-0">
+          {!fileName ? (
+            /* ── Drop zone ── */
+            <label
+              className={`flex flex-col items-center justify-center flex-1 rounded-xl border-2 border-dashed transition-colors cursor-pointer select-none ${
+                isDragOver
+                  ? "border-violet-500 bg-violet-500/10"
+                  : "border-zinc-700 hover:border-zinc-500"
+              }`}
+              onDragOver={handleDragOver}
+              onDragLeave={handleDragLeave}
+              onDrop={handleDrop}
+            >
+              <input
+                type="file"
+                accept="audio/mpeg,audio/wav,audio/ogg,audio/flac,audio/aac,audio/mp4,.mp3,.wav,.ogg,.flac,.aac,.m4a"
+                className="sr-only"
+                onChange={handleFileInput}
+              />
+              <svg
+                className="w-8 h-8 text-zinc-500 mb-2"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={1.5}
+                  d="M9 19V6l12-3v13M9 19c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zm12-3c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2z"
+                />
+              </svg>
+              <p className="text-xs text-zinc-500 text-center px-2">
+                Drop an mp3 or wav here
+              </p>
+              <p className="text-xs text-zinc-600 mt-0.5">or click to browse</p>
+            </label>
+          ) : (
+            /* ── Player controls ── */
+            <>
+              {/* Track name + swap file button */}
+              <div className="flex items-center gap-1 min-w-0">
+                <p
+                  className="text-xs text-zinc-200 font-medium truncate flex-1"
+                  title={fileName}
+                >
+                  {fileName}
+                </p>
+                <label
+                  className="shrink-0 text-zinc-500 hover:text-zinc-300 transition-colors cursor-pointer"
+                  title="Load a different file"
+                  onDragOver={handleDragOver}
+                  onDragLeave={handleDragLeave}
+                  onDrop={handleDrop}
+                >
+                  <input
+                    type="file"
+                    accept="audio/mpeg,audio/wav,audio/ogg,audio/flac,audio/aac,audio/mp4,.mp3,.wav,.ogg,.flac,.aac,.m4a"
+                    className="sr-only"
+                    onChange={handleFileInput}
+                  />
+                  <svg
+                    className="w-3.5 h-3.5"
+                    fill="none"
+                    stroke="currentColor"
+                    viewBox="0 0 24 24"
+                  >
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={2}
+                      d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"
+                    />
+                  </svg>
+                </label>
+              </div>
+
+              {/* Seek bar */}
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-zinc-500 tabular-nums shrink-0 w-8 text-right">
+                  {formatTime(currentTime)}
+                </span>
+                <div className="relative flex-1 h-1.5 group">
+                  <div className="absolute inset-0 bg-zinc-700 rounded-full" />
+                  <div
+                    className="absolute inset-y-0 left-0 bg-violet-500 rounded-full pointer-events-none"
+                    style={{ width: `${progress}%` }}
+                  />
+                  <input
+                    type="range"
+                    min={0}
+                    max={duration || 0}
+                    step={0.1}
+                    value={currentTime}
+                    onChange={handleSeek}
+                    className="absolute inset-0 w-full opacity-0 cursor-pointer h-full"
+                  />
+                </div>
+                <span className="text-xs text-zinc-500 tabular-nums shrink-0 w-8">
+                  {formatTime(duration)}
+                </span>
+              </div>
+
+              {/* Play / pause + volume */}
+              <div className="flex items-center gap-3">
+                <button
+                  onClick={togglePlay}
+                  className="flex items-center justify-center w-8 h-8 rounded-full bg-violet-600 hover:bg-violet-500 transition-colors shrink-0"
+                  aria-label={isPlaying ? "Pause" : "Play"}
+                >
+                  {isPlaying ? (
+                    <svg
+                      className="w-4 h-4 text-white"
+                      fill="currentColor"
+                      viewBox="0 0 24 24"
+                    >
+                      <path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z" />
+                    </svg>
+                  ) : (
+                    <svg
+                      className="w-4 h-4 text-white"
+                      fill="currentColor"
+                      viewBox="0 0 24 24"
+                    >
+                      <path d="M8 5v14l11-7z" />
+                    </svg>
+                  )}
+                </button>
+
+                {/* Volume */}
+                <div className="flex items-center gap-1.5 flex-1 min-w-0">
+                  <svg
+                    className="w-3.5 h-3.5 text-zinc-500 shrink-0"
+                    fill="currentColor"
+                    viewBox="0 0 24 24"
+                  >
+                    <path
+                      d={
+                        volume === 0
+                          ? "M16.5 12A4.5 4.5 0 0014 7.97v2.21l2.45 2.45c.03-.2.05-.41.05-.63zm2.5 0c0 .94-.2 1.82-.54 2.64l1.51 1.51A8.796 8.796 0 0021 12c0-4.28-2.99-7.86-7-8.77v2.06c2.89.86 5 3.54 5 6.71zM4.27 3L3 4.27 7.73 9H3v6h4l5 5v-6.73l4.25 4.25A6.96 6.96 0 0112.18 19c-.65 0-1.27-.12-1.86-.32l-1.51 1.51A8.928 8.928 0 0012 21a8.95 8.95 0 005.42-1.81L19.73 21 21 19.73l-9-9L4.27 3zM12 4L9.91 6.09 12 8.18V4z"
+                          : volume < 0.5
+                            ? "M18.5 12A4.5 4.5 0 0016 7.97v8.05A4.48 4.48 0 0018.5 12zM5 9v6h4l5 5V4L9 9H5z"
+                            : "M3 9v6h4l5 5V4L7 9H3zm13.5 3A4.5 4.5 0 0014 7.97v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77 0-4.28-2.99-7.86-7-8.77z"
+                      }
+                    />
+                  </svg>
+                  <div className="relative flex-1 h-1.5">
+                    <div className="absolute inset-0 bg-zinc-700 rounded-full" />
+                    <div
+                      className="absolute inset-y-0 left-0 bg-zinc-500 rounded-full pointer-events-none"
+                      style={{ width: `${volume * 100}%` }}
+                    />
+                    <input
+                      type="range"
+                      min={0}
+                      max={1}
+                      step={0.02}
+                      value={volume}
+                      onChange={handleVolume}
+                      className="absolute inset-0 w-full opacity-0 cursor-pointer h-full"
+                    />
+                  </div>
+                </div>
+              </div>
+            </>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}

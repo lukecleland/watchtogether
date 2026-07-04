@@ -5,6 +5,30 @@ import Draggable, {
 } from "react-draggable";
 import type { PanelState } from "../types/panels";
 
+/**
+ * DraggablePanel — a controlled drag + resize container for a single panel.
+ *
+ * ## Drag
+ * Uses react-draggable in controlled mode (`position` prop) so remote state
+ * updates (from `onSyncUpdate`) are reflected immediately without fighting
+ * react-draggable's internal position tracking.
+ *
+ * ## Resize
+ * A custom bottom-right corner handle listens to raw `mousemove`/`mouseup`
+ * events on `window` so the drag doesn't break when the cursor moves outside
+ * the panel boundary quickly.
+ *
+ * ## Sync throttle
+ * Both drag and resize schedule `onSyncUpdate` via a 50 ms debounce (~20 fps)
+ * to avoid flooding the data channel. The final position is always flushed
+ * immediately on drag/resize stop.
+ *
+ * ## z-order
+ * `onBringToFront` is called on `pointerdown`; Session.tsx increments a shared
+ * `topZRef` counter and updates the panel's `z` value, which is applied as
+ * `zIndex` on the wrapper div and synced to the remote peer.
+ */
+
 interface DraggablePanelProps {
   state: PanelState;
   /** Called immediately on every drag/resize tick — update local state here. */
@@ -15,6 +39,8 @@ interface DraggablePanelProps {
   onBringToFront: () => void;
   minWidth?: number;
   minHeight?: number;
+  /** Canvas zoom scale — passed to react-draggable so drag deltas are correct. */
+  scale?: number;
   children: React.ReactNode;
   className?: string;
 }
@@ -26,6 +52,7 @@ export function DraggablePanel({
   onBringToFront,
   minWidth = 240,
   minHeight = 140,
+  scale = 1,
   children,
   className = "",
 }: DraggablePanelProps) {
@@ -60,33 +87,27 @@ export function DraggablePanel({
   };
 
   // ── Resize (bottom-right corner handle) ───────────────────────────────
-  const startResizeMouseDown = (e: React.MouseEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-
+  const startResize = (startX: number, startY: number) => {
     const origin = {
-      mx: e.clientX,
-      my: e.clientY,
+      mx: startX,
+      my: startY,
       w: stateRef.current.width,
       h: stateRef.current.height,
     };
 
+    const applyResize = (clientX: number, clientY: number): PanelState => ({
+      ...stateRef.current,
+      width: Math.max(minWidth, origin.w + (clientX - origin.mx) / scale),
+      height: Math.max(minHeight, origin.h + (clientY - origin.my) / scale),
+    });
+
     const onMouseMove = (ev: MouseEvent) => {
-      const next = {
-        ...stateRef.current,
-        width: Math.max(minWidth, origin.w + ev.clientX - origin.mx),
-        height: Math.max(minHeight, origin.h + ev.clientY - origin.my),
-      };
-      onLocalUpdate(next);
-      scheduleSyncUpdate(next);
+      onLocalUpdate(applyResize(ev.clientX, ev.clientY));
+      scheduleSyncUpdate(applyResize(ev.clientX, ev.clientY));
     };
 
     const onMouseUp = (ev: MouseEvent) => {
-      const next = {
-        ...stateRef.current,
-        width: Math.max(minWidth, origin.w + ev.clientX - origin.mx),
-        height: Math.max(minHeight, origin.h + ev.clientY - origin.my),
-      };
+      const next = applyResize(ev.clientX, ev.clientY);
       onLocalUpdate(next);
       if (syncTimerRef.current) clearTimeout(syncTimerRef.current);
       onSyncUpdate(next);
@@ -94,8 +115,39 @@ export function DraggablePanel({
       window.removeEventListener("mouseup", onMouseUp);
     };
 
+    const onTouchMove = (ev: TouchEvent) => {
+      const t = ev.touches[0];
+      const next = applyResize(t.clientX, t.clientY);
+      onLocalUpdate(next);
+      scheduleSyncUpdate(next);
+    };
+
+    const onTouchEnd = (ev: TouchEvent) => {
+      const t = ev.changedTouches[0];
+      const next = applyResize(t.clientX, t.clientY);
+      onLocalUpdate(next);
+      if (syncTimerRef.current) clearTimeout(syncTimerRef.current);
+      onSyncUpdate(next);
+      window.removeEventListener("touchmove", onTouchMove);
+      window.removeEventListener("touchend", onTouchEnd);
+    };
+
     window.addEventListener("mousemove", onMouseMove);
     window.addEventListener("mouseup", onMouseUp);
+    window.addEventListener("touchmove", onTouchMove, { passive: true });
+    window.addEventListener("touchend", onTouchEnd);
+  };
+
+  const startResizeMouseDown = (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    startResize(e.clientX, e.clientY);
+  };
+
+  const startResizeTouchStart = (e: React.TouchEvent) => {
+    e.stopPropagation();
+    const touch = e.touches[0];
+    startResize(touch.clientX, touch.clientY);
   };
 
   return (
@@ -106,7 +158,8 @@ export function DraggablePanel({
       onStop={handleDragStop}
       handle=".drag-handle"
       cancel=".no-drag"
-      bounds="parent"
+      scale={scale}
+      enableUserSelectHack={false}
     >
       <div
         ref={nodeRef}
@@ -116,10 +169,11 @@ export function DraggablePanel({
       >
         {children}
 
-        {/* Resize handle — bottom-right corner */}
+        {/* Resize handle — bottom-right corner, larger hit area for touch */}
         <div
           onMouseDown={startResizeMouseDown}
-          className="no-drag absolute bottom-0 right-0 w-5 h-5 z-20 cursor-se-resize rounded-br-xl"
+          onTouchStart={startResizeTouchStart}
+          className="no-drag absolute bottom-0 right-0 w-8 h-8 z-20 cursor-se-resize rounded-br-xl"
           style={{
             background:
               "linear-gradient(135deg, transparent 40%, rgba(255,255,255,0.18) 40%)",

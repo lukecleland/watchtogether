@@ -1,6 +1,25 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import Peer, { type DataConnection, type MediaConnection } from "peerjs";
 
+/**
+ * usePeer — manages the full WebRTC lifecycle for a two-person session.
+ *
+ * ## Roles
+ * - **Host**: registers a named PeerJS peer using `roomCode.toLowerCase()` as the peer ID,
+ *   then waits for an incoming connection and media call.
+ * - **Guest**: connects to that peer ID, opens a data channel, and initiates the media call.
+ *
+ * ## What it owns
+ * - `localStream` → sent to the remote peer via `peer.call()`
+ * - Incoming media stream → exposed as `remoteStream`
+ * - Data channel (`DataConnection`) → passed out so callers can send/receive structured messages
+ *
+ * ## Teardown
+ * The effect cleanup closes the call, data connection, and destroys the Peer instance
+ * when the component unmounts or when `localStream` / `roomCode` changes.
+ */
+
+/** Connection lifecycle stages shown in the UI status badge. */
 export type PeerStatus =
   | "idle"
   | "connecting"
@@ -69,6 +88,21 @@ export function usePeer({
     const peerId = isHost ? roomCode.toLowerCase() : undefined;
     const peer = new Peer(peerId as string, {
       debug: 0,
+      config: {
+        // Multiple STUN servers improve NAT traversal reliability across networks.
+        // For production use on cellular (carrier-grade NAT / symmetric NAT), you
+        // will also need TURN servers — add them here with credentials:
+        // { urls: "turn:your-turn-server.example.com", username: "…", credential: "…" }
+        iceServers: [
+          { urls: "stun:stun.l.google.com:19302" },
+          { urls: "stun:stun1.l.google.com:19302" },
+          { urls: "stun:stun2.l.google.com:19302" },
+          { urls: "stun:stun3.l.google.com:19302" },
+          { urls: "stun:stun4.l.google.com:19302" },
+        ],
+        // Unified Plan is the standard SDP format required by modern iOS/Safari.
+        sdpSemantics: "unified-plan",
+      },
     });
     peerRef.current = peer;
     setStatus("connecting");

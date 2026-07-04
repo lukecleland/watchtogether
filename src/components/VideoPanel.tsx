@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 
 interface VideoPanelProps {
   stream: MediaStream | null;
@@ -9,11 +9,43 @@ interface VideoPanelProps {
 export function VideoPanel({ stream, label, muted = false }: VideoPanelProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
 
+  // iOS Safari refuses to autoplay unmuted video without a user gesture.
+  // We start every video element muted (the HTML attribute) so autoplay
+  // works, then let the user tap an overlay to unlock audio for remote streams.
+  // NOTE: we control video.muted via DOM ref — not JSX prop — because React
+  // does not reliably update the muted boolean attribute after mount.
+  const [audioUnlocked, setAudioUnlocked] = useState(false);
+
+  // `muted` prop being true means "this is always muted" (local / self view).
+  // `muted` prop being false means "should play audio" (remote peer).
+  const wantsAudio = !muted;
+  const showUnlockOverlay = wantsAudio && !audioUnlocked && !!stream;
+
   useEffect(() => {
-    if (videoRef.current) {
-      videoRef.current.srcObject = stream;
+    const video = videoRef.current;
+    if (!video) return;
+    video.srcObject = stream;
+    // Always start muted so iOS autoplay policy allows the video to play.
+    // Audio is unlocked separately via user gesture (see unlockAudio below).
+    video.muted = true;
+    setAudioUnlocked(false);
+    if (stream) {
+      // Explicit play() call — iOS sometimes ignores the autoPlay HTML attribute.
+      video.play().catch(() => {
+        // Blocked even while muted — extremely restrictive environment.
+        // The user can still tap the overlay to start playback.
+      });
     }
   }, [stream]);
+
+  const unlockAudio = () => {
+    const video = videoRef.current;
+    if (!video) return;
+    // This runs inside a user-gesture callstack so iOS allows unmuting.
+    video.muted = false;
+    video.play().catch(() => {});
+    setAudioUnlocked(true);
+  };
 
   return (
     <div className="flex flex-col h-full bg-zinc-900 rounded-xl overflow-hidden shadow-2xl border border-zinc-800">
@@ -37,13 +69,49 @@ export function VideoPanel({ stream, label, muted = false }: VideoPanelProps) {
       {/* Video */}
       <div className="relative flex-1 min-h-0 bg-zinc-900">
         {stream ? (
-          <video
-            ref={videoRef}
-            autoPlay
-            playsInline
-            muted={muted}
-            className={`w-full h-full object-cover ${muted ? "scale-x-[-1]" : ""}`}
-          />
+          <>
+            <video
+              ref={videoRef}
+              autoPlay
+              playsInline
+              // muted is intentionally omitted here — controlled via video.muted
+              // DOM property directly because React does not reliably reflect
+              // changes to the muted boolean attribute after initial render.
+              className={`w-full h-full object-cover ${muted ? "scale-x-[-1]" : ""}`}
+            />
+
+            {/* iOS audio-unlock overlay — shown for remote streams until tapped */}
+            {showUnlockOverlay && (
+              <button
+                onClick={unlockAudio}
+                className="no-drag absolute inset-0 flex flex-col items-center justify-center gap-2 bg-black/60 text-white"
+                style={{ touchAction: "manipulation" }}
+              >
+                <svg
+                  className="w-8 h-8 opacity-80"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={1.5}
+                    d="M15.536 8.464a5 5 0 010 7.072M12 6v12m0 0l-3-3m3 3l3-3M9.172 9.172a4 4 0 000 5.656"
+                  />
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={1.5}
+                    d="M19.07 4.929a9 9 0 010 14.142"
+                  />
+                </svg>
+                <span className="text-xs font-medium opacity-90">
+                  Tap to hear
+                </span>
+              </button>
+            )}
+          </>
         ) : (
           <div className="w-full h-full flex items-center justify-center">
             <div className="text-center text-zinc-600">

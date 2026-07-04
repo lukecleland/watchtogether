@@ -1,5 +1,27 @@
 import { useEffect, useRef, useCallback, type RefObject } from "react";
 
+/**
+ * useYouTubePlayer — a stable wrapper around the YouTube IFrame Player API.
+ *
+ * ## Why not react-youtube?
+ * react-youtube wraps the player in React state, which causes it to recreate
+ * the underlying iframe on re-renders. The YT.Player instance then loses its
+ * internal iframe reference, breaking all subsequent postMessage calls with
+ * a "target origin mismatch" error. This hook avoids that by:
+ *
+ * 1. Loading the iframe_api script exactly once (singleton `apiPromise`).
+ * 2. Creating the YT.Player inside a raw DOM div that is appended directly to
+ *    a stable container ref — React never touches the player element.
+ * 3. Keeping the player mounted for the entire component lifetime; it is only
+ *    destroyed on unmount.
+ *
+ * ## Echo prevention
+ * `onStateChange` is called for every playback state transition, including
+ * intermediate ones (buffering=3, cued=5). Callers should filter to terminal
+ * states 1 (playing) and 2 (paused) and use a time-window guard to avoid
+ * echoing remote-triggered state changes back to the peer.
+ */
+
 // ----- Minimal YT types (avoids needing @types/youtube) -----
 interface YTPlayer {
   playVideo(): void;
@@ -7,6 +29,7 @@ interface YTPlayer {
   seekTo(seconds: number, allowSeekAhead: boolean): void;
   getCurrentTime(): number;
   loadVideoById(videoId: string): void;
+  setVolume(volume: number): void;
   destroy(): void;
 }
 
@@ -150,5 +173,11 @@ export function useYouTubePlayer(
     playerRef.current?.seekTo(seconds, true);
   }, []);
 
-  return { loadVideo, playVideo, pauseVideo, seekTo };
+  const setVolume = useCallback((volume: number) => {
+    playerRef.current?.setVolume(
+      Math.round(Math.max(0, Math.min(100, volume))),
+    );
+  }, []);
+
+  return { loadVideo, playVideo, pauseVideo, seekTo, setVolume };
 }
