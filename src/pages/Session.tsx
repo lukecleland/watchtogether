@@ -149,6 +149,9 @@ export function Session({ roomCode, isHost }: SessionProps) {
 	// video's title or the audio file's name. Panels report these upward once
 	// their content is known, so two YouTube chips aren't indistinguishable.
 	const [panelLabels, setPanelLabels] = useState<Record<string, string>>({});
+	// User-set chip names. Take precedence over the derived label above, and
+	// survive the underlying content changing — if you named it, you meant it.
+	const [customLabels, setCustomLabels] = useState<Record<string, string>>({});
 	// In-flight "fly to panel" animation, so a second jump cancels the first
 	const jumpAnimRef = useRef<number | null>(null);
 
@@ -168,6 +171,12 @@ export function Session({ roomCode, isHost }: SessionProps) {
 	const forgetPanel = useCallback((id: string) => {
 		setDockedIds(prev => (prev.includes(id) ? prev.filter(d => d !== id) : prev));
 		setPanelLabels(prev => {
+			if (!(id in prev)) return prev;
+			const next = { ...prev };
+			delete next[id];
+			return next;
+		});
+		setCustomLabels(prev => {
 			if (!(id in prev)) return prev;
 			const next = { ...prev };
 			delete next[id];
@@ -290,20 +299,43 @@ export function Session({ roomCode, isHost }: SessionProps) {
 		setDockedIds(prev => (prev.includes(id) ? prev.filter(d => d !== id) : [...prev, id]));
 	};
 
-	// Fly the viewport so the given panel sits in the middle of the screen.
-	// The panel itself never moves — the dock is navigation, not relocation.
-	// Zoom is left alone: the jump respects whatever scale the user chose.
+	// Fly the viewport so the given panel sits in the middle of the screen at a
+	// size that's actually usable for its content. The panel itself never moves
+	// — the dock is navigation, not relocation; only the viewport changes.
 	const jumpToPanel = (id: string) => {
-		const target = id === 'local' || id === 'remote' ? fixedPanels[id] : dynamicPanels.find(p => p.id === id)?.state;
+		const isFixed = id === 'local' || id === 'remote';
+		const panel = isFixed ? null : dynamicPanels.find(p => p.id === id);
+		const target = isFixed ? fixedPanels[id] : panel?.state;
 		if (!target) return;
 
-		const { x: fromX, y: fromY, scale } = canvasStateRef.current;
-		const destX = window.innerWidth / 2 - (target.x + target.width / 2) * scale;
-		const destY = window.innerHeight / 2 - (target.y + target.height / 2) * scale;
+		const type: DockEntry['type'] = isFixed ? id : (panel?.type ?? 'youtube');
+		const vw = window.innerWidth;
+		const vh = window.innerHeight;
+
+		// How wide the panel should appear on screen, by content type. A video
+		// needs real estate to be watchable; an audio player would look absurd
+		// blown up to fill the viewport.
+		const IDEAL_ON_SCREEN_WIDTH: Record<DockEntry['type'], number> = {
+			youtube: 720,
+			local: 480,
+			remote: 480,
+			audio: 360
+		};
+
+		// Start from the ideal width, then make sure the whole panel still fits
+		// on screen with a margin, and stay inside the app's zoom limits.
+		const fitScale = Math.min((vw * 0.9) / target.width, (vh * 0.85) / target.height);
+		const idealScale = IDEAL_ON_SCREEN_WIDTH[type] / target.width;
+		const toScale = Math.max(0.25, Math.min(4, fitScale, idealScale));
+
+		const { x: fromX, y: fromY, scale: fromScale } = canvasStateRef.current;
+		const destX = vw / 2 - (target.x + target.width / 2) * toScale;
+		const destY = vh / 2 - (target.y + target.height / 2) * toScale;
 		const dx = destX - fromX;
 		const dy = destY - fromY;
-		// Already centred — nothing to animate
-		if (Math.abs(dx) < 1 && Math.abs(dy) < 1) return;
+		const dScale = toScale - fromScale;
+		// Already framed — nothing to animate
+		if (Math.abs(dx) < 1 && Math.abs(dy) < 1 && Math.abs(dScale) < 0.01) return;
 
 		if (jumpAnimRef.current !== null) cancelAnimationFrame(jumpAnimRef.current);
 
@@ -312,8 +344,11 @@ export function Session({ roomCode, isHost }: SessionProps) {
 		const step = (now: number) => {
 			const t = Math.min(1, (now - startedAt) / DURATION);
 			const eased = 1 - Math.pow(1 - t, 3); // easeOutCubic
-			// Spread onto prev so a mid-flight zoom (wheel / pinch) isn't clobbered
-			setCanvas(prev => ({ ...prev, x: fromX + dx * eased, y: fromY + dy * eased }));
+			setCanvas({
+				x: fromX + dx * eased,
+				y: fromY + dy * eased,
+				scale: fromScale + dScale * eased
+			});
 			jumpAnimRef.current = t < 1 ? requestAnimationFrame(step) : null;
 		};
 		jumpAnimRef.current = requestAnimationFrame(step);
@@ -336,13 +371,37 @@ export function Session({ roomCode, isHost }: SessionProps) {
 		return `${base} ${sameType.findIndex(p => p.id === panel.id) + 1}`;
 	};
 
+	// Label precedence: user-set name → derived from content → typed fallback
 	const dockEntries: DockEntry[] = dockedIds.flatMap((id): DockEntry[] => {
-		if (id === 'local') return [{ id, type: 'local', label: 'You' }];
-		if (id === 'remote') return [{ id, type: 'remote', label: 'Guest' }];
+		const custom = customLabels[id];
+		if (id === 'local' || id === 'remote') {
+			const auto = id === 'local' ? 'You' : 'Guest';
+			return [{ id, type: id, label: custom ?? auto, renamed: !!custom }];
+		}
 		const panel = dynamicPanels.find(p => p.id === id);
 		if (!panel) return [];
-		return [{ id, type: panel.type, label: panelLabels[id] ?? fallbackLabel(panel) }];
+		return [
+			{
+				id,
+				type: panel.type,
+				label: custom ?? panelLabels[id] ?? fallbackLabel(panel),
+				renamed: !!custom
+			}
+		];
 	});
+
+	// Empty string clears the custom name and reverts to the automatic label
+	const renameDockEntry = (id: string, label: string) => {
+		setCustomLabels(prev => {
+			if (!label) {
+				if (!(id in prev)) return prev;
+				const next = { ...prev };
+				delete next[id];
+				return next;
+			}
+			return { ...prev, [id]: label };
+		});
+	};
 
 	// Compute spatial volume (0–1) for an audio panel.
 	//
@@ -850,7 +909,7 @@ export function Session({ roomCode, isHost }: SessionProps) {
 			</div>
 
 			{/* Dock — fixed overlay above the canvas; shortcuts back to docked panels */}
-			<Dock entries={dockEntries} onJump={jumpToPanel} onRemove={toggleDock} />
+			<Dock entries={dockEntries} onJump={jumpToPanel} onRemove={toggleDock} onRename={renameDockEntry} />
 		</div>
 	);
 }
