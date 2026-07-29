@@ -1,25 +1,15 @@
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef } from "react";
 import Peer, { type DataConnection, type MediaConnection } from "peerjs";
 
 /**
- * usePeer — manages the full WebRTC lifecycle for a two-person session.
+ * Manages a two-person PeerJS room whose ownership can move between clients.
  *
- * ## Roles
- * - **Host**: registers a named PeerJS peer using `roomCode.toLowerCase()` as the peer ID,
- *   then waits for an incoming connection and media call.
- * - **Guest**: connects to that peer ID, opens a data channel, and initiates the media call.
- *
- * ## What it owns
- * - `localStream` → sent to the remote peer via `peer.call()`
- * - Incoming media stream → exposed as `remoteStream`
- * - Data channel (`DataConnection`) → passed out so callers can send/receive structured messages
- *
- * ## Teardown
- * The effect cleanup closes the call, data connection, and destroys the Peer instance
- * when the component unmounts or when `localStream` / `roomCode` changes.
+ * The client that owns `roomCode` accepts incoming connections. The other
+ * client has an anonymous PeerJS ID and dials the room owner. If the owner
+ * leaves, the remaining client claims `roomCode`; if the old owner returns, it
+ * sees that the ID is taken and automatically becomes the joining client.
  */
 
-/** Connection lifecycle stages shown in the UI status badge. */
 export type PeerStatus =
   | "idle"
   | "connecting"
@@ -40,6 +30,22 @@ interface UsePeerResult {
   error: string | null;
 }
 
+type RoomRole = "owner" | "joiner";
+
+const peerOptions: NonNullable<ConstructorParameters<typeof Peer>[1]> = {
+  debug: 0,
+  config: {
+    iceServers: [
+      { urls: "stun:stun.l.google.com:19302" },
+      { urls: "stun:stun1.l.google.com:19302" },
+      { urls: "stun:stun2.l.google.com:19302" },
+      { urls: "stun:stun3.l.google.com:19302" },
+      { urls: "stun:stun4.l.google.com:19302" },
+    ],
+    sdpSemantics: "unified-plan",
+  },
+};
+
 export function usePeer({
   roomCode,
   isHost,
@@ -56,99 +62,187 @@ export function usePeer({
   const callRef = useRef<MediaConnection | null>(null);
   const dataConnRef = useRef<DataConnection | null>(null);
 
-  const setupDataConn = useCallback((conn: DataConnection) => {
-    dataConnRef.current = conn;
-    conn.on("open", () => {
-      setDataConnection(conn);
-      setStatus("connected");
-    });
-    conn.on("close", () => {
-      setDataConnection(null);
-      setStatus("idle");
-    });
-    conn.on("error", (err) => {
-      setError(err.message);
-    });
-  }, []);
-
-  const setupCall = useCallback(
-    (call: MediaConnection, _stream: MediaStream) => {
-      callRef.current = call;
-      call.on("stream", (remoteMediaStream) => {
-        setRemoteStream(remoteMediaStream);
-      });
-      call.on("close", () => setRemoteStream(null));
-    },
-    [],
-  );
-
   useEffect(() => {
     if (!localStream) return;
 
-    const peerId = isHost ? roomCode.toLowerCase() : undefined;
-    const peer = new Peer(peerId as string, {
-      debug: 0,
-      config: {
-        // Multiple STUN servers improve NAT traversal reliability across networks.
-        // For production use on cellular (carrier-grade NAT / symmetric NAT), you
-        // will also need TURN servers — add them here with credentials:
-        // { urls: "turn:your-turn-server.example.com", username: "…", credential: "…" }
-        iceServers: [
-          { urls: "stun:stun.l.google.com:19302" },
-          { urls: "stun:stun1.l.google.com:19302" },
-          { urls: "stun:stun2.l.google.com:19302" },
-          { urls: "stun:stun3.l.google.com:19302" },
-          { urls: "stun:stun4.l.google.com:19302" },
-        ],
-        // Unified Plan is the standard SDP format required by modern iOS/Safari.
-        sdpSemantics: "unified-plan",
-      },
-    });
-    peerRef.current = peer;
-    setStatus("connecting");
+    let active = true;
+    let role: RoomRole = isHost ? "owner" : "joiner";
+    let transitionTimer: ReturnType<typeof setTimeout> | null = null;
+    let signalingTimer: ReturnType<typeof setTimeout> | null = null;
+    const roomId = roomCode.toLowerCase();
 
-    peer.on("open", () => {
-      if (isHost) {
-        setStatus("waiting");
+    const clearTransitionTimer = () => {
+      if (!transitionTimer) return;
+      clearTimeout(transitionTimer);
+      transitionTimer = null;
+    };
 
-        peer.on("connection", (conn) => {
-          setupDataConn(conn);
-        });
+    const clearConnections = () => {
+      const call = callRef.current;
+      const data = dataConnRef.current;
+      callRef.current = null;
+      dataConnRef.current = null;
+      call?.close();
+      data?.close();
+      setRemoteStream(null);
+      setDataConnection(null);
+    };
 
+    const setupDataConnection = (conn: DataConnection) => {
+      const previous = dataConnRef.current;
+      dataConnRef.current = conn;
+      if (previous && previous !== conn) previous.close();
+
+      conn.on("open", () => {
+        if (!active || dataConnRef.current !== conn) return;
+        clearTransitionTimer();
+        setDataConnection(conn);
+        setStatus("connected");
+        setError(null);
+      });
+
+      conn.on("close", () => {
+        if (!active || dataConnRef.current !== conn) return;
+        dataConnRef.current = null;
+        setDataConnection(null);
+        recoverRoom();
+      });
+
+      conn.on("error", () => {
+        if (!active || dataConnRef.current !== conn) return;
+        recoverRoom();
+      });
+    };
+
+    const setupCall = (call: MediaConnection) => {
+      const previous = callRef.current;
+      callRef.current = call;
+      if (previous && previous !== call) previous.close();
+
+      call.on("stream", (stream) => {
+        if (active && callRef.current === call) setRemoteStream(stream);
+      });
+
+      call.on("close", () => {
+        if (!active || callRef.current !== call) return;
+        callRef.current = null;
+        setRemoteStream(null);
+        recoverRoom();
+      });
+
+      call.on("error", () => {
+        if (active && callRef.current === call) recoverRoom();
+      });
+    };
+
+    const dialOwner = (peer: Peer) => {
+      if (!active || peerRef.current !== peer || !peer.open) return;
+      setStatus("connecting");
+      setupDataConnection(peer.connect(roomId, { reliable: true }));
+      setupCall(peer.call(roomId, localStream));
+    };
+
+    const createPeer = (nextRole: RoomRole) => {
+      if (!active) return;
+
+      clearTransitionTimer();
+      role = nextRole;
+      clearConnections();
+
+      const previous = peerRef.current;
+      peerRef.current = null;
+      previous?.destroy();
+
+      const peer =
+        nextRole === "owner"
+          ? new Peer(roomId, peerOptions)
+          : new Peer(peerOptions);
+      peerRef.current = peer;
+      setStatus("connecting");
+
+      if (nextRole === "owner") {
+        peer.on("connection", setupDataConnection);
         peer.on("call", (call) => {
           call.answer(localStream);
-          setupCall(call, localStream);
+          setupCall(call);
         });
-      } else {
-        // Guest: connect data channel then call
-        const conn = peer.connect(roomCode.toLowerCase(), { reliable: true });
-        setupDataConn(conn);
-
-        const call = peer.call(roomCode.toLowerCase(), localStream);
-        setupCall(call, localStream);
       }
-    });
 
-    peer.on("error", (err) => {
-      if (err.type === "unavailable-id") {
-        setError(
-          "This session code is already in use. Please try starting a new session.",
-        );
-      } else if (err.type === "peer-unavailable") {
-        setError("Session not found. Check the code and try again.");
-      } else {
-        setError(`Connection error: ${err.message}`);
+      peer.on("open", () => {
+        if (!active || peerRef.current !== peer) return;
+        setError(null);
+        if (role === "owner") setStatus("waiting");
+        else dialOwner(peer);
+      });
+
+      peer.on("disconnected", () => {
+        if (!active || peerRef.current !== peer || peer.destroyed) return;
+        setStatus("connecting");
+        if (signalingTimer) clearTimeout(signalingTimer);
+        signalingTimer = setTimeout(() => {
+          signalingTimer = null;
+          if (
+            active &&
+            peerRef.current === peer &&
+            !peer.destroyed &&
+            peer.disconnected
+          ) {
+            peer.reconnect();
+          }
+        }, 1_000);
+      });
+
+      peer.on("error", (peerError) => {
+        if (!active || peerRef.current !== peer) return;
+
+        if (peerError.type === "unavailable-id" && role === "owner") {
+          // Another surviving participant owns the room, so join it.
+          if (transitionTimer) return;
+          setError(null);
+          transitionTimer = setTimeout(() => createPeer("joiner"), 300);
+          return;
+        }
+
+        if (peerError.type === "peer-unavailable" && role === "joiner") {
+          // Nobody currently owns the room. Claim it so future clients can
+          // reconnect to this participant.
+          if (transitionTimer) return;
+          setError("Restoring the session…");
+          transitionTimer = setTimeout(() => createPeer("owner"), 500);
+          return;
+        }
+
+        setError(`Connection error: ${peerError.message}`);
+        setStatus("error");
+      });
+    };
+
+    function recoverRoom() {
+      if (!active || transitionTimer) return;
+
+      if (role === "owner") {
+        // The room address is still ours; wait for the other participant.
+        setStatus("waiting");
+        return;
       }
-      setStatus("error");
-    });
+
+      // A joiner left alone becomes the new owner of the stable room address.
+      setStatus("connecting");
+      setError("Restoring the session…");
+      transitionTimer = setTimeout(() => createPeer("owner"), 500);
+    }
+
+    createPeer(role);
 
     return () => {
-      callRef.current?.close();
-      dataConnRef.current?.close();
-      peer.destroy();
+      active = false;
+      clearTransitionTimer();
+      if (signalingTimer) clearTimeout(signalingTimer);
+      clearConnections();
+      peerRef.current?.destroy();
       peerRef.current = null;
     };
-  }, [localStream, roomCode, isHost, setupDataConn, setupCall]);
+  }, [localStream, roomCode, isHost]);
 
   return { remoteStream, dataConnection, status, error };
 }

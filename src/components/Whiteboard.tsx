@@ -163,21 +163,32 @@ const Whiteboard = forwardRef<WhiteboardHandle, WhiteboardProps>(
       };
     };
 
-    // ── Mouse handlers ───────────────────────────────────────────────────
+    // ── Pointer handlers (mouse / stylus) ────────────────────────────────
+    //
+    // Capture the pointer for the lifetime of a stroke. Without capture the
+    // canvas stops receiving movement as soon as the cursor crosses a video
+    // or another floating panel, which leaves a gap in the stroke.
 
-    const handleMouseDown = (e: React.MouseEvent<HTMLCanvasElement>) => {
+    const handlePointerDown = (e: React.PointerEvent<HTMLCanvasElement>) => {
+      // Touch has dedicated multi-touch-aware handlers below.
+      if (e.pointerType === "touch") return;
       if (e.button !== 0) return; // left-click only; middle-click reserved for panning
+      e.currentTarget.setPointerCapture(e.pointerId);
       isDrawingRef.current = true;
       lastPointRef.current = getPosFromClient(e.clientX, e.clientY);
     };
 
-    const handleMouseMove = (e: React.MouseEvent<HTMLCanvasElement>) => {
+    const handlePointerMove = (e: React.PointerEvent<HTMLCanvasElement>) => {
+      if (e.pointerType === "touch") return;
       if (!isDrawingRef.current || !lastPointRef.current) return;
       const curr = getPosFromClient(e.clientX, e.clientY);
       emitStroke(curr);
     };
 
-    const stopDrawing = () => {
+    const stopDrawing = (e?: React.PointerEvent<HTMLCanvasElement>) => {
+      if (e && e.currentTarget.hasPointerCapture(e.pointerId)) {
+        e.currentTarget.releasePointerCapture(e.pointerId);
+      }
       isDrawingRef.current = false;
       lastPointRef.current = null;
     };
@@ -241,14 +252,14 @@ const Whiteboard = forwardRef<WhiteboardHandle, WhiteboardProps>(
           cursor: tool === "eraser" ? "cell" : "crosshair",
           touchAction: "none",
         }}
-        onMouseDown={handleMouseDown}
-        onMouseMove={handleMouseMove}
-        onMouseUp={stopDrawing}
-        onMouseLeave={stopDrawing}
+        onPointerDown={handlePointerDown}
+        onPointerMove={handlePointerMove}
+        onPointerUp={stopDrawing}
+        onPointerCancel={stopDrawing}
         onTouchStart={handleTouchStart}
         onTouchMove={handleTouchMove}
-        onTouchEnd={stopDrawing}
-        onTouchCancel={stopDrawing}
+        onTouchEnd={() => stopDrawing()}
+        onTouchCancel={() => stopDrawing()}
       />
     );
   },

@@ -163,7 +163,14 @@ export function DraggablePanel({
     >
       <div
         ref={nodeRef}
-        style={{ width: state.width, height: state.height, zIndex: state.z }}
+        style={{
+          width: state.width,
+          height: state.height,
+          zIndex: state.z,
+          // The full-screen transformed parent is click-through so it cannot
+          // block whiteboard strokes; only visible panels opt back in.
+          pointerEvents: "auto",
+        }}
         className={`absolute ${className}`}
         onPointerDown={onBringToFront}
       >

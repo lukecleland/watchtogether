@@ -786,7 +786,10 @@ export function Session({ roomCode, isHost }: SessionProps) {
 					position: 'absolute',
 					inset: 0,
 					transform: `translate(${canvas.x}px, ${canvas.y}px) scale(${canvas.scale})`,
-					transformOrigin: '0 0'
+					transformOrigin: '0 0',
+					// The wrapper covers the viewport but is visually empty outside
+					// its children. Let those empty areas reach the whiteboard.
+					pointerEvents: 'none'
 				}}>
 				{localStream && (
 					<DraggablePanel state={fixedPanels.local} {...makePanelHandlers('local')} minWidth={200} minHeight={120} scale={canvas.scale} className="z-10">
