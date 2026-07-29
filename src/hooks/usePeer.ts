@@ -138,8 +138,16 @@ export function usePeer({
     const dialOwner = (peer: Peer) => {
       if (!active || peerRef.current !== peer || !peer.open) return;
       setStatus("connecting");
-      setupDataConnection(peer.connect(roomId, { reliable: true }));
-      setupCall(peer.call(roomId, localStream));
+      const canSendMedia = localStream.getTracks().length > 0;
+      setupDataConnection(
+        peer.connect(roomId, {
+          reliable: true,
+          metadata: { canSendMedia },
+        }),
+      );
+      // An empty-stream joiner must not create the offer: an offer without
+      // media sections cannot receive tracks. The owner calls it instead.
+      if (canSendMedia) setupCall(peer.call(roomId, localStream));
     };
 
     const createPeer = (nextRole: RoomRole) => {
@@ -161,12 +169,22 @@ export function usePeer({
       setStatus("connecting");
 
       if (nextRole === "owner") {
-        peer.on("connection", setupDataConnection);
-        peer.on("call", (call) => {
-          call.answer(localStream);
-          setupCall(call);
+        peer.on("connection", (conn) => {
+          setupDataConnection(conn);
+          const remoteCanSendMedia =
+            (conn.metadata as { canSendMedia?: boolean } | undefined)
+              ?.canSendMedia ?? true;
+          if (!remoteCanSendMedia && localStream.getTracks().length > 0) {
+            setupCall(peer.call(conn.peer, localStream));
+          }
         });
       }
+      // Either role may receive the media call. In particular, an owner with
+      // media calls a receive-only joiner after inspecting its data metadata.
+      peer.on("call", (call) => {
+        call.answer(localStream);
+        setupCall(call);
+      });
 
       peer.on("open", () => {
         if (!active || peerRef.current !== peer) return;

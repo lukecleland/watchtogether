@@ -421,20 +421,31 @@ export function Session({ roomCode, isHost }: SessionProps) {
 	};
 
 	useEffect(() => {
-		let stream: MediaStream;
-		navigator.mediaDevices
-			.getUserMedia({ video: true, audio: true })
-			.then(s => {
-				stream = s;
-				setLocalStream(s);
-			})
-			.catch((err: Error) => {
-				if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
-					setMediaError('Camera and microphone access was denied. Please allow access and refresh.');
-				} else {
-					setMediaError(`Could not access camera/mic: ${err.message}`);
+		let stream: MediaStream | undefined;
+
+		const acquireMedia = async () => {
+			try {
+				if (!navigator.mediaDevices?.getUserMedia) {
+					throw new DOMException('Media devices are unavailable', 'NotFoundError');
 				}
-			});
+				stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+				setLocalStream(stream);
+			} catch (err) {
+				const mediaFailure = err as Error;
+				// An empty stream marks media setup as complete and lets usePeer
+				// join in receive-only/data-only mode.
+				stream = new MediaStream();
+				setLocalStream(stream);
+
+				if (mediaFailure.name === 'NotAllowedError' || mediaFailure.name === 'PermissionDeniedError') {
+					setMediaError('Camera and microphone access was denied. You joined without sharing media.');
+				} else {
+					setMediaError('Camera and microphone are unavailable. You joined without sharing media.');
+				}
+			}
+		};
+
+		void acquireMedia();
 
 		return () => {
 			stream?.getTracks().forEach(t => t.stop());
@@ -601,16 +612,6 @@ export function Session({ roomCode, isHost }: SessionProps) {
 		error: ''
 	};
 
-	if (mediaError) {
-		return (
-			<div className="min-h-screen bg-zinc-950 flex items-center justify-center p-6">
-				<div className="bg-red-950/60 border border-red-700 rounded-2xl p-8 max-w-md text-center">
-					<p className="text-red-300 font-medium">{mediaError}</p>
-				</div>
-			</div>
-		);
-	}
-
 	return (
 		<div
 			className="relative w-screen h-screen overflow-hidden select-none"
@@ -760,6 +761,13 @@ export function Session({ roomCode, isHost }: SessionProps) {
 					{error}
 				</div>
 			)}
+			{mediaError && !error && (
+				<div
+					className="absolute left-4 right-4 z-50 bg-amber-950/60 border border-amber-700 rounded-xl px-4 py-2.5 text-amber-200 text-sm"
+					style={{ top: 'calc(3rem + env(safe-area-inset-top) + 0.5rem)' }}>
+					{mediaError}
+				</div>
+			)}
 
 			{/* Whiteboard canvas — sits below all panels, transparent so grid shows through */}
 			<Whiteboard ref={whiteboardRef} tool={wbTool} color={wbColor} width={wbWidth} onStroke={handleWbStroke} canvasTransform={canvas} />
@@ -797,7 +805,7 @@ export function Session({ roomCode, isHost }: SessionProps) {
 					// its children. Let those empty areas reach the whiteboard.
 					pointerEvents: 'none'
 				}}>
-				{localStream && (
+				{localStream && localStream.getTracks().length > 0 && (
 					<DraggablePanel state={fixedPanels.local} {...makePanelHandlers('local')} minWidth={200} minHeight={120} scale={canvas.scale} className="z-10">
 						<VideoPanel stream={localStream} label="You" muted docked={dockedIds.includes('local')} onToggleDock={() => toggleDock('local')} />
 					</DraggablePanel>
