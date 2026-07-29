@@ -55,36 +55,73 @@ export function usePeer({
   const peerRef = useRef<Peer | null>(null);
   const callRef = useRef<MediaConnection | null>(null);
   const dataConnRef = useRef<DataConnection | null>(null);
+  const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const signalingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const mountedRef = useRef(false);
+  const connectToHostRef = useRef<() => void>(() => undefined);
+
+  const scheduleReconnect = useCallback(() => {
+    if (isHost || !mountedRef.current || reconnectTimerRef.current) return;
+
+    setStatus("connecting");
+    reconnectTimerRef.current = setTimeout(() => {
+      reconnectTimerRef.current = null;
+      connectToHostRef.current();
+    }, 1_500);
+  }, [isHost]);
 
   const setupDataConn = useCallback((conn: DataConnection) => {
+    const previous = dataConnRef.current;
     dataConnRef.current = conn;
+    if (previous && previous !== conn) previous.close();
+
     conn.on("open", () => {
+      if (dataConnRef.current !== conn) return;
       setDataConnection(conn);
       setStatus("connected");
+      setError(null);
     });
     conn.on("close", () => {
+      if (dataConnRef.current !== conn) return;
+      dataConnRef.current = null;
       setDataConnection(null);
-      setStatus("idle");
+      if (isHost) setStatus("waiting");
+      else scheduleReconnect();
     });
     conn.on("error", (err) => {
+      if (dataConnRef.current !== conn) return;
       setError(err.message);
+      if (!isHost) scheduleReconnect();
     });
-  }, []);
+  }, [isHost, scheduleReconnect]);
 
   const setupCall = useCallback(
-    (call: MediaConnection, _stream: MediaStream) => {
+    (call: MediaConnection) => {
+      const previous = callRef.current;
       callRef.current = call;
+      if (previous && previous !== call) previous.close();
+
       call.on("stream", (remoteMediaStream) => {
+        if (callRef.current !== call) return;
         setRemoteStream(remoteMediaStream);
       });
-      call.on("close", () => setRemoteStream(null));
+      call.on("close", () => {
+        if (callRef.current !== call) return;
+        callRef.current = null;
+        setRemoteStream(null);
+        if (!isHost) scheduleReconnect();
+      });
+      call.on("error", () => {
+        if (callRef.current === call && !isHost) scheduleReconnect();
+      });
     },
-    [],
+    [isHost, scheduleReconnect],
   );
 
   useEffect(() => {
     if (!localStream) return;
 
+    mountedRef.current = true;
     const peerId = isHost ? roomCode.toLowerCase() : undefined;
     const peer = new Peer(peerId as string, {
       debug: 0,
@@ -107,26 +144,50 @@ export function usePeer({
     peerRef.current = peer;
     setStatus("connecting");
 
+    const connectToHost = () => {
+      if (!mountedRef.current || peer.destroyed) return;
+      if (!peer.open) {
+        scheduleReconnect();
+        return;
+      }
+
+      setStatus("connecting");
+      const hostId = roomCode.toLowerCase();
+      setupDataConn(peer.connect(hostId, { reliable: true }));
+      setupCall(peer.call(hostId, localStream));
+    };
+    connectToHostRef.current = connectToHost;
+
+    if (isHost) {
+      // Register these before "open" so a very fast reconnect cannot arrive
+      // between the peer opening and its handlers being attached.
+      peer.on("connection", setupDataConn);
+      peer.on("call", (call) => {
+        call.answer(localStream);
+        setupCall(call);
+      });
+    }
+
     peer.on("open", () => {
       if (isHost) {
         setStatus("waiting");
-
-        peer.on("connection", (conn) => {
-          setupDataConn(conn);
-        });
-
-        peer.on("call", (call) => {
-          call.answer(localStream);
-          setupCall(call, localStream);
-        });
       } else {
-        // Guest: connect data channel then call
-        const conn = peer.connect(roomCode.toLowerCase(), { reliable: true });
-        setupDataConn(conn);
-
-        const call = peer.call(roomCode.toLowerCase(), localStream);
-        setupCall(call, localStream);
+        connectToHost();
       }
+    });
+
+    peer.on("disconnected", () => {
+      if (!mountedRef.current || peer.destroyed) return;
+      setStatus("connecting");
+      // This restores the PeerJS signalling socket. Existing WebRTC channels
+      // may survive; if they do not, their close handlers re-dial the host.
+      if (signalingTimerRef.current) clearTimeout(signalingTimerRef.current);
+      signalingTimerRef.current = setTimeout(() => {
+        signalingTimerRef.current = null;
+        if (mountedRef.current && !peer.destroyed && peer.disconnected) {
+          peer.reconnect();
+        }
+      }, 1_000);
     });
 
     peer.on("error", (err) => {
@@ -135,7 +196,11 @@ export function usePeer({
           "This session code is already in use. Please try starting a new session.",
         );
       } else if (err.type === "peer-unavailable") {
-        setError("Session not found. Check the code and try again.");
+        // The host may only be offline briefly. Keep retrying with the same
+        // guest peer so a refresh or network handover can recover.
+        setError("Waiting for the session host to reconnect…");
+        scheduleReconnect();
+        return;
       } else {
         setError(`Connection error: ${err.message}`);
       }
@@ -143,12 +208,31 @@ export function usePeer({
     });
 
     return () => {
+      mountedRef.current = false;
+      connectToHostRef.current = () => undefined;
+      if (reconnectTimerRef.current) {
+        clearTimeout(reconnectTimerRef.current);
+        reconnectTimerRef.current = null;
+      }
+      if (signalingTimerRef.current) {
+        clearTimeout(signalingTimerRef.current);
+        signalingTimerRef.current = null;
+      }
       callRef.current?.close();
       dataConnRef.current?.close();
+      callRef.current = null;
+      dataConnRef.current = null;
       peer.destroy();
       peerRef.current = null;
     };
-  }, [localStream, roomCode, isHost, setupDataConn, setupCall]);
+  }, [
+    localStream,
+    roomCode,
+    isHost,
+    setupDataConn,
+    setupCall,
+    scheduleReconnect,
+  ]);
 
   return { remoteStream, dataConnection, status, error };
 }
