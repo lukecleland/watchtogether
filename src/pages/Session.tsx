@@ -145,8 +145,10 @@ export function Session({ roomCode, isHost }: SessionProps) {
 	// Deliberately NOT synced — which panels you keep to hand is a personal
 	// view preference, so the peer's dock is independent of yours.
 	const [dockedIds, setDockedIds] = useState<string[]>([]);
-	// Loaded track name per audio panel id, used to label its dock chip.
-	const [trackNames, setTrackNames] = useState<Record<string, string>>({});
+	// Self-describing label per panel id, used for its dock chip: the YouTube
+	// video's title or the audio file's name. Panels report these upward once
+	// their content is known, so two YouTube chips aren't indistinguishable.
+	const [panelLabels, setPanelLabels] = useState<Record<string, string>>({});
 	// In-flight "fly to panel" animation, so a second jump cancels the first
 	const jumpAnimRef = useRef<number | null>(null);
 
@@ -165,7 +167,7 @@ export function Session({ roomCode, isHost }: SessionProps) {
 	// Drop any dock chip / cached label belonging to a panel that no longer exists
 	const forgetPanel = useCallback((id: string) => {
 		setDockedIds(prev => (prev.includes(id) ? prev.filter(d => d !== id) : prev));
-		setTrackNames(prev => {
+		setPanelLabels(prev => {
 			if (!(id in prev)) return prev;
 			const next = { ...prev };
 			delete next[id];
@@ -324,18 +326,22 @@ export function Session({ roomCode, isHost }: SessionProps) {
 		};
 	}, []);
 
+	// Fallback dock label for a panel with nothing yet to name itself after (no
+	// video loaded, no file chosen). Numbered only when more than one of that
+	// type exists, so a lone panel reads "YouTube" rather than "YouTube 1".
+	const fallbackLabel = (panel: DynamicPanel): string => {
+		const base = panel.type === 'youtube' ? 'YouTube' : 'Audio';
+		const sameType = dynamicPanels.filter(p => p.type === panel.type);
+		if (sameType.length < 2) return base;
+		return `${base} ${sameType.findIndex(p => p.id === panel.id) + 1}`;
+	};
+
 	const dockEntries: DockEntry[] = dockedIds.flatMap((id): DockEntry[] => {
 		if (id === 'local') return [{ id, type: 'local', label: 'You' }];
 		if (id === 'remote') return [{ id, type: 'remote', label: 'Guest' }];
 		const panel = dynamicPanels.find(p => p.id === id);
 		if (!panel) return [];
-		return [
-			{
-				id,
-				type: panel.type,
-				label: panel.type === 'youtube' ? 'YouTube' : (trackNames[id] ?? 'Audio')
-			}
-		];
+		return [{ id, type: panel.type, label: panelLabels[id] ?? fallbackLabel(panel) }];
 	});
 
 	// Compute spatial volume (0–1) for an audio panel.
@@ -819,6 +825,7 @@ export function Session({ roomCode, isHost }: SessionProps) {
 								spatialVolume={spatialVolumeForPanel(panel.state)}
 								docked={dockedIds.includes(panel.id)}
 								onToggleDock={() => toggleDock(panel.id)}
+								onTitleChange={title => setPanelLabels(prev => ({ ...prev, [panel.id]: title }))}
 							/>
 						) : (
 							<AudioPlayer
@@ -827,7 +834,7 @@ export function Session({ roomCode, isHost }: SessionProps) {
 								spatialVolume={spatialVolumeForPanel(panel.state)}
 								docked={dockedIds.includes(panel.id)}
 								onToggleDock={() => toggleDock(panel.id)}
-								onTrackChange={name => setTrackNames(prev => ({ ...prev, [panel.id]: name }))}
+								onTrackChange={name => setPanelLabels(prev => ({ ...prev, [panel.id]: name }))}
 							/>
 						)}
 					</DraggablePanel>

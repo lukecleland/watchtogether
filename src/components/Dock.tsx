@@ -128,7 +128,9 @@ export function Dock({ entries, onJump, onRemove }: DockProps) {
             title={`Go to ${entry.label}`}
           >
             <DockIcon type={entry.type} />
-            <span className="text-xs font-medium text-zinc-300 truncate max-w-[7rem]">
+            {/* Video titles and filenames can be long — truncate, full text
+                is available via the button's title tooltip. */}
+            <span className="text-xs font-medium text-zinc-300 truncate max-w-[10rem]">
               {entry.label}
             </span>
           </button>

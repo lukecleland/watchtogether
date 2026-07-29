@@ -30,6 +30,8 @@ interface YoutubeWidgetProps {
   /** Whether this panel currently has a dock shortcut. */
   docked?: boolean;
   onToggleDock?: () => void;
+  /** Reports the loaded video's title so the parent can label the dock chip. */
+  onTitleChange?: (title: string) => void;
 }
 
 function parseVideoId(input: string): string | null {
@@ -53,6 +55,7 @@ export function YoutubeWidget({
   spatialVolume = 1,
   docked = false,
   onToggleDock,
+  onTitleChange,
 }: YoutubeWidgetProps) {
   const [hasVideo, setHasVideo] = useState(false);
   const [inputValue, setInputValue] = useState("");
@@ -66,10 +69,23 @@ export function YoutubeWidget({
   const playerContainerRef = useRef<HTMLDivElement>(null);
   // sendSync is set below after useYouTubeSync; use a ref to avoid circular deps
   const sendSyncRef = useRef<(msg: SyncMessage) => void>(() => {});
+  // getTitle comes from the player hook below — same circular-dep dodge
+  const getTitleRef = useRef<() => string | null>(() => null);
+  const onTitleChangeRef = useRef(onTitleChange);
+  onTitleChangeRef.current = onTitleChange;
+  const lastReportedTitleRef = useRef<string | null>(null);
 
   // Called by useYouTubePlayer when the player's playback state changes
   const handleStateChange = useCallback(
     (state: number, getCurrentTime: () => number) => {
+      // Video metadata arrives asynchronously, so check for a title on *every*
+      // state change (including cued/buffering) rather than only 1 and 2.
+      const title = getTitleRef.current();
+      if (title && title !== lastReportedTitleRef.current) {
+        lastReportedTitleRef.current = title;
+        onTitleChangeRef.current?.(title);
+      }
+
       // Only act on terminal playback states; ignore buffering (3), cued (5), etc.
       if (state !== 1 && state !== 2) return;
 
@@ -82,8 +98,9 @@ export function YoutubeWidget({
     [],
   );
 
-  const { loadVideo, playVideo, pauseVideo, seekTo, setVolume } =
+  const { loadVideo, playVideo, pauseVideo, seekTo, setVolume, getTitle } =
     useYouTubePlayer(playerContainerRef, { onStateChange: handleStateChange });
+  getTitleRef.current = getTitle;
 
   // Keep YouTube player volume in sync with spatial positioning
   useEffect(() => {
