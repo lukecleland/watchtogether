@@ -31,6 +31,12 @@ interface YTPlayer {
   loadVideoById(videoId: string): void;
   setVolume(volume: number): void;
   destroy(): void;
+  /**
+   * Undocumented but long-stable API returning metadata for the loaded video.
+   * Only populated once the player has fetched it, so read it on a state
+   * change rather than immediately after `loadVideoById`.
+   */
+  getVideoData?(): { title?: string; video_id?: string };
 }
 
 interface YTPlayerOptions {
@@ -179,5 +185,15 @@ export function useYouTubePlayer(
     );
   }, []);
 
-  return { loadVideo, playVideo, pauseVideo, seekTo, setVolume };
+  /** Title of the loaded video, or null until the player has the metadata. */
+  const getTitle = useCallback((): string | null => {
+    try {
+      return playerRef.current?.getVideoData?.()?.title || null;
+    } catch {
+      // getVideoData is undocumented — never let it break the caller
+      return null;
+    }
+  }, []);
+
+  return { loadVideo, playVideo, pauseVideo, seekTo, setVolume, getTitle };
 }
