@@ -1,12 +1,22 @@
 import { useEffect, useRef, useState } from "react";
+import { DockButton } from "./Dock";
 
 interface VideoPanelProps {
   stream: MediaStream | null;
   label: string;
   muted?: boolean;
+  /** Whether this panel currently has a dock shortcut. */
+  docked?: boolean;
+  onToggleDock?: () => void;
 }
 
-export function VideoPanel({ stream, label, muted = false }: VideoPanelProps) {
+export function VideoPanel({
+  stream,
+  label,
+  muted = false,
+  docked = false,
+  onToggleDock,
+}: VideoPanelProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
 
   // iOS Safari refuses to autoplay unmuted video without a user gesture.
@@ -50,20 +60,27 @@ export function VideoPanel({ stream, label, muted = false }: VideoPanelProps) {
   return (
     <div className="flex flex-col h-full bg-zinc-900 rounded-xl overflow-hidden shadow-2xl border border-zinc-800">
       {/* Drag handle bar */}
-      <div className="drag-handle flex items-center gap-2 px-3 py-1.5 bg-zinc-800/80 cursor-grab active:cursor-grabbing select-none shrink-0">
-        <svg
-          className="w-3 h-3 text-zinc-500"
-          fill="currentColor"
-          viewBox="0 0 24 24"
-        >
-          <circle cx="9" cy="6" r="1.5" />
-          <circle cx="15" cy="6" r="1.5" />
-          <circle cx="9" cy="12" r="1.5" />
-          <circle cx="15" cy="12" r="1.5" />
-          <circle cx="9" cy="18" r="1.5" />
-          <circle cx="15" cy="18" r="1.5" />
-        </svg>
-        <span className="text-xs text-zinc-400 font-medium">{label}</span>
+      <div className="drag-handle flex items-center justify-between gap-2 px-3 py-1.5 bg-zinc-800/80 cursor-grab active:cursor-grabbing select-none shrink-0">
+        <div className="flex items-center gap-2 min-w-0">
+          <svg
+            className="w-3 h-3 text-zinc-500 shrink-0"
+            fill="currentColor"
+            viewBox="0 0 24 24"
+          >
+            <circle cx="9" cy="6" r="1.5" />
+            <circle cx="15" cy="6" r="1.5" />
+            <circle cx="9" cy="12" r="1.5" />
+            <circle cx="15" cy="12" r="1.5" />
+            <circle cx="9" cy="18" r="1.5" />
+            <circle cx="15" cy="18" r="1.5" />
+          </svg>
+          <span className="text-xs text-zinc-400 font-medium truncate">
+            {label}
+          </span>
+        </div>
+        {onToggleDock && (
+          <DockButton docked={docked} onToggle={onToggleDock} />
+        )}
       </div>
 
       {/* Video */}

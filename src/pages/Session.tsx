@@ -14,6 +14,8 @@ import { useState, useEffect, useCallback, useRef } from 'react';
  *   panels land proportionally on different-resolution screens
  * - Renders the full-screen whiteboard canvas (z=0), the whiteboard toolbar,
  *   and the three floating DraggablePanels (local video, remote video, YouTube)
+ * - Owns the dock (`dockedIds`): per-user shortcuts that fly the viewport back
+ *   to a panel out on the canvas. Not synced — see the Dock component.
  *
  * ## Panel perspective swap
  * When a `panel-update` arrives for `"local"`, it is applied to `"remote"` and
@@ -32,6 +34,7 @@ import { AudioPlayer } from '../components/AudioPlayer';
 import { DraggablePanel } from '../components/DraggablePanel';
 import { Whiteboard, type WhiteboardHandle, type WhiteboardStroke } from '../components/Whiteboard';
 import { WhiteboardToolbar } from '../components/WhiteboardToolbar';
+import { Dock, type DockEntry } from '../components/Dock';
 import { usePeer } from '../hooks/usePeer';
 import { useYouTubeSync, type SyncMessage } from '../hooks/useYouTubeSync';
 import type { PanelId, PanelState, DynamicPanel } from '../types/panels';
@@ -137,6 +140,16 @@ export function Session({ roomCode, isHost }: SessionProps) {
 	const isPanningRef = useRef(false);
 	const panStartRef = useRef({ mx: 0, my: 0, cx: 0, cy: 0 });
 
+	// ── Dock ─────────────────────────────────────────────────────────────────
+	// Panel ids with a shortcut in the dock, in the order they were added.
+	// Deliberately NOT synced — which panels you keep to hand is a personal
+	// view preference, so the peer's dock is independent of yours.
+	const [dockedIds, setDockedIds] = useState<string[]>([]);
+	// Loaded track name per audio panel id, used to label its dock chip.
+	const [trackNames, setTrackNames] = useState<Record<string, string>>({});
+	// In-flight "fly to panel" animation, so a second jump cancels the first
+	const jumpAnimRef = useRef<number | null>(null);
+
 	// Whiteboard
 	const whiteboardRef = useRef<WhiteboardHandle>(null);
 	const [wbTool, setWbTool] = useState<'pen' | 'eraser'>('pen');
@@ -148,6 +161,17 @@ export function Session({ roomCode, isHost }: SessionProps) {
 		isHost,
 		localStream
 	});
+
+	// Drop any dock chip / cached label belonging to a panel that no longer exists
+	const forgetPanel = useCallback((id: string) => {
+		setDockedIds(prev => (prev.includes(id) ? prev.filter(d => d !== id) : prev));
+		setTrackNames(prev => {
+			if (!(id in prev)) return prev;
+			const next = { ...prev };
+			delete next[id];
+			return next;
+		});
+	}, []);
 
 	// Panel sync — wired to the same data channel as YouTube sync
 	const handleRemoteSync = useCallback((msg: SyncMessage) => {
@@ -192,12 +216,14 @@ export function Session({ roomCode, isHost }: SessionProps) {
 			]);
 		} else if (msg.type === 'remove-panel') {
 			setDynamicPanels(prev => prev.filter(p => p.id !== msg.id));
+			// The panel is gone, so any local dock chip pointing at it must go too
+			forgetPanel(msg.id);
 		} else if (msg.type === 'draw') {
 			whiteboardRef.current?.drawStroke(msg);
 		} else if (msg.type === 'draw-clear') {
 			whiteboardRef.current?.clearCanvas();
 		}
-	}, []);
+	}, [forgetPanel]);
 
 	// We use useYouTubeSync here to route panel-update and whiteboard messages.
 	// YoutubeWidget mounts its own useYouTubeSync instance for YT playback messages.
@@ -254,8 +280,63 @@ export function Session({ roomCode, isHost }: SessionProps) {
 
 	const removePanel = (id: string) => {
 		setDynamicPanels(prev => prev.filter(p => p.id !== id));
+		forgetPanel(id);
 		sendSync({ type: 'remove-panel', id });
 	};
+
+	const toggleDock = (id: string) => {
+		setDockedIds(prev => (prev.includes(id) ? prev.filter(d => d !== id) : [...prev, id]));
+	};
+
+	// Fly the viewport so the given panel sits in the middle of the screen.
+	// The panel itself never moves — the dock is navigation, not relocation.
+	// Zoom is left alone: the jump respects whatever scale the user chose.
+	const jumpToPanel = (id: string) => {
+		const target = id === 'local' || id === 'remote' ? fixedPanels[id] : dynamicPanels.find(p => p.id === id)?.state;
+		if (!target) return;
+
+		const { x: fromX, y: fromY, scale } = canvasStateRef.current;
+		const destX = window.innerWidth / 2 - (target.x + target.width / 2) * scale;
+		const destY = window.innerHeight / 2 - (target.y + target.height / 2) * scale;
+		const dx = destX - fromX;
+		const dy = destY - fromY;
+		// Already centred — nothing to animate
+		if (Math.abs(dx) < 1 && Math.abs(dy) < 1) return;
+
+		if (jumpAnimRef.current !== null) cancelAnimationFrame(jumpAnimRef.current);
+
+		const DURATION = 420;
+		const startedAt = performance.now();
+		const step = (now: number) => {
+			const t = Math.min(1, (now - startedAt) / DURATION);
+			const eased = 1 - Math.pow(1 - t, 3); // easeOutCubic
+			// Spread onto prev so a mid-flight zoom (wheel / pinch) isn't clobbered
+			setCanvas(prev => ({ ...prev, x: fromX + dx * eased, y: fromY + dy * eased }));
+			jumpAnimRef.current = t < 1 ? requestAnimationFrame(step) : null;
+		};
+		jumpAnimRef.current = requestAnimationFrame(step);
+	};
+
+	// Cancel any in-flight jump on unmount
+	useEffect(() => {
+		return () => {
+			if (jumpAnimRef.current !== null) cancelAnimationFrame(jumpAnimRef.current);
+		};
+	}, []);
+
+	const dockEntries: DockEntry[] = dockedIds.flatMap((id): DockEntry[] => {
+		if (id === 'local') return [{ id, type: 'local', label: 'You' }];
+		if (id === 'remote') return [{ id, type: 'remote', label: 'Guest' }];
+		const panel = dynamicPanels.find(p => p.id === id);
+		if (!panel) return [];
+		return [
+			{
+				id,
+				type: panel.type,
+				label: panel.type === 'youtube' ? 'YouTube' : (trackNames[id] ?? 'Audio')
+			}
+		];
+	});
 
 	// Compute spatial volume (0–1) for an audio panel.
 	//
@@ -709,13 +790,13 @@ export function Session({ roomCode, isHost }: SessionProps) {
 				}}>
 				{localStream && (
 					<DraggablePanel state={fixedPanels.local} {...makePanelHandlers('local')} minWidth={200} minHeight={120} scale={canvas.scale} className="z-10">
-						<VideoPanel stream={localStream} label="You" muted />
+						<VideoPanel stream={localStream} label="You" muted docked={dockedIds.includes('local')} onToggleDock={() => toggleDock('local')} />
 					</DraggablePanel>
 				)}
 
 				{status === 'connected' && (
 					<DraggablePanel state={fixedPanels.remote} {...makePanelHandlers('remote')} minWidth={200} minHeight={120} scale={canvas.scale} className="z-10">
-						<VideoPanel stream={remoteStream} label="Guest" />
+						<VideoPanel stream={remoteStream} label="Guest" docked={dockedIds.includes('remote')} onToggleDock={() => toggleDock('remote')} />
 					</DraggablePanel>
 				)}
 
@@ -733,13 +814,25 @@ export function Session({ roomCode, isHost }: SessionProps) {
 								initialVideoId={panel.initialVideoId}
 								onClose={() => removePanel(panel.id)}
 								spatialVolume={spatialVolumeForPanel(panel.state)}
+								docked={dockedIds.includes(panel.id)}
+								onToggleDock={() => toggleDock(panel.id)}
 							/>
 						) : (
-							<AudioPlayer initialFile={panel.initialFile} onClose={() => removePanel(panel.id)} spatialVolume={spatialVolumeForPanel(panel.state)} />
+							<AudioPlayer
+								initialFile={panel.initialFile}
+								onClose={() => removePanel(panel.id)}
+								spatialVolume={spatialVolumeForPanel(panel.state)}
+								docked={dockedIds.includes(panel.id)}
+								onToggleDock={() => toggleDock(panel.id)}
+								onTrackChange={name => setTrackNames(prev => ({ ...prev, [panel.id]: name }))}
+							/>
 						)}
 					</DraggablePanel>
 				))}
 			</div>
+
+			{/* Dock — fixed overlay above the canvas; shortcuts back to docked panels */}
+			<Dock entries={dockEntries} onJump={jumpToPanel} onRemove={toggleDock} />
 		</div>
 	);
 }

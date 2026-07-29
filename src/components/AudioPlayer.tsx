@@ -1,4 +1,5 @@
 import { useState, useRef, useCallback, useEffect } from "react";
+import { DockButton } from "./Dock";
 
 function formatTime(seconds: number): string {
   if (!isFinite(seconds)) return "0:00";
@@ -11,11 +12,19 @@ export function AudioPlayer({
   initialFile,
   onClose,
   spatialVolume = 1,
+  docked = false,
+  onToggleDock,
+  onTrackChange,
 }: {
   initialFile?: File;
   onClose?: () => void;
   /** 0–1 multiplier from spatial positioning — updated by the parent on every canvas transform change. */
   spatialVolume?: number;
+  /** Whether this panel currently has a dock shortcut. */
+  docked?: boolean;
+  onToggleDock?: () => void;
+  /** Reports the loaded track name so the parent can label the dock chip. */
+  onTrackChange?: (name: string) => void;
 }) {
   const audioRef = useRef<HTMLAudioElement>(null);
   const objectUrlRef = useRef<string | null>(null);
@@ -36,11 +45,13 @@ export function AudioPlayer({
     objectUrlRef.current = url;
     audioRef.current.src = url;
     audioRef.current.load();
-    setFileName(file.name.replace(/\.[^.]+$/, ""));
+    const name = file.name.replace(/\.[^.]+$/, "");
+    setFileName(name);
+    onTrackChange?.(name);
     setCurrentTime(0);
     setIsPlaying(false);
     setMinimised(false);
-  }, []);
+  }, [onTrackChange]);
 
   // Auto-load if created with a file (e.g. from a background drop)
   useEffect(() => {
@@ -165,6 +176,9 @@ export function AudioPlayer({
           </span>
         </div>
         <div className="flex items-center gap-1">
+          {onToggleDock && (
+            <DockButton docked={docked} onToggle={onToggleDock} />
+          )}
           <button
             onClick={() => setMinimised((m) => !m)}
             className="text-zinc-400 hover:text-white transition-colors"

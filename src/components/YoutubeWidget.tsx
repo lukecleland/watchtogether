@@ -1,6 +1,7 @@
 import { useState, useRef, useCallback, useEffect } from "react";
 import { useYouTubeSync, type SyncMessage } from "../hooks/useYouTubeSync";
 import { useYouTubePlayer } from "../hooks/useYouTubePlayer";
+import { DockButton } from "./Dock";
 import type { DataConnection } from "peerjs";
 
 /**
@@ -26,6 +27,9 @@ interface YoutubeWidgetProps {
   onClose?: () => void;
   /** 0–1 spatial volume multiplier updated by the parent on every canvas transform change. */
   spatialVolume?: number;
+  /** Whether this panel currently has a dock shortcut. */
+  docked?: boolean;
+  onToggleDock?: () => void;
 }
 
 function parseVideoId(input: string): string | null {
@@ -47,6 +51,8 @@ export function YoutubeWidget({
   initialVideoId,
   onClose,
   spatialVolume = 1,
+  docked = false,
+  onToggleDock,
 }: YoutubeWidgetProps) {
   const [hasVideo, setHasVideo] = useState(false);
   const [inputValue, setInputValue] = useState("");
@@ -166,6 +172,9 @@ export function YoutubeWidget({
           </span>
         </div>
         <div className="flex items-center gap-1">
+          {onToggleDock && (
+            <DockButton docked={docked} onToggle={onToggleDock} />
+          )}
           <button
             onClick={() => setMinimised((m) => !m)}
             className="text-zinc-400 hover:text-white transition-colors"
