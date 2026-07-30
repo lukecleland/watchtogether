@@ -10,6 +10,60 @@ function formatTime(seconds: number): string {
   return `${m}:${s.toString().padStart(2, "0")}`;
 }
 
+// ── Deck geometry ────────────────────────────────────────────────────────
+// The deck is one SVG drawing, so every part of it — platter, tonearm,
+// label type — scales together when the panel is resized. All coordinates
+// live in this 420×260 viewBox space.
+const DECK_W = 420;
+const DECK_H = 260;
+/** Platter spindle. */
+const HUB = { x: 150, y: 130 };
+/** Brushed platter rim (spins with the record). */
+const R_PLATTER = 112;
+const R_VINYL = 104;
+/** Outer playable groove — where the stylus lands at 0:00. */
+const R_GROOVE_OUT = 97;
+/** Paper label edge — the run-out; the stylus arrives here as the track ends. */
+const R_LABEL = 40;
+/** Tonearm bearing. */
+const PIVOT = { x: 345, y: 46 };
+/** Pivot → stylus tip. */
+const ARM_LENGTH = 186;
+
+/**
+ * Tonearm rotation (degrees) that puts the stylus at radius `r` from the
+ * spindle — actual geometry rather than an eyeballed range, so the arm
+ * genuinely starts on the outer groove and ends on the label. Law of
+ * cosines at the pivot: the stylus sits where the arm's arc crosses the
+ * radius-r circle around the spindle.
+ */
+function armAngleAt(r: number): number {
+  const d = Math.hypot(HUB.x - PIVOT.x, HUB.y - PIVOT.y);
+  const base = (Math.atan2(HUB.y - PIVOT.y, HUB.x - PIVOT.x) * 180) / Math.PI;
+  const cos = (d * d + ARM_LENGTH * ARM_LENGTH - r * r) / (2 * d * ARM_LENGTH);
+  return base - (Math.acos(Math.max(-1, Math.min(1, cos))) * 180) / Math.PI;
+}
+
+/** Parked on the arm rest, clear of the platter, until a record is playing. */
+const ARM_REST_DEG = armAngleAt(R_PLATTER + 12);
+
+/** The strobe dots around the platter edge, precomputed once. */
+const STROBE_DOTS = Array.from({ length: 48 }, (_, i) => {
+  const a = (i / 48) * Math.PI * 2;
+  return {
+    x: HUB.x + Math.cos(a) * (R_PLATTER - 4),
+    y: HUB.y + Math.sin(a) * (R_PLATTER - 4),
+  };
+});
+
+/** Label type shrinks to fit longer file names rather than clipping them. */
+function labelFontSize(name: string): number {
+  if (name.length <= 10) return 11;
+  if (name.length <= 16) return 9;
+  if (name.length <= 24) return 7.5;
+  return 6.5;
+}
+
 export function AudioPlayer({
   id,
   dataConnection,
@@ -379,58 +433,203 @@ export function AudioPlayer({
           ) : (
             /* ── Player controls ── */
             <>
-              {/* Top-down turntable deck */}
-              <div className="relative flex-1 min-h-[180px] overflow-hidden rounded-xl border border-amber-950/70 bg-[linear-gradient(135deg,#8a5839,#c18a5d_48%,#74462f)] shadow-[inset_0_1px_0_rgba(255,255,255,0.16),inset_0_-10px_25px_rgba(35,16,8,0.28)]">
-                {/* Platter */}
-                <div className="absolute left-3 top-1/2 h-[calc(100%-1.5rem)] max-h-[240px] aspect-square -translate-y-1/2 rounded-full bg-zinc-700 p-[5px] shadow-[0_8px_18px_rgba(0,0,0,0.45),inset_0_0_0_2px_rgba(255,255,255,0.08)]">
-                  <div
-                    className="record-vinyl relative h-full w-full rounded-full overflow-hidden shadow-[inset_0_0_16px_rgba(255,255,255,0.08)]"
-                    style={{ animationPlayState: isPlaying ? "running" : "paused" }}
+              {/* Top-down turntable deck — one SVG drawing so every part
+                  scales with the panel, capped at a sensible size. */}
+              <div className="relative flex-1 min-h-0 flex items-center justify-center">
+                <div className="relative w-full max-w-[560px]">
+                  <svg
+                    viewBox={`0 0 ${DECK_W} ${DECK_H}`}
+                    className="block w-full h-auto rounded-xl shadow-[0_10px_28px_rgba(0,0,0,0.5)]"
+                    role="img"
+                    aria-label={`Record player — ${fileName}`}
                   >
-                    <div className="absolute inset-[9%] rounded-full border border-zinc-700/80" />
-                    <div className="absolute inset-[18%] rounded-full border border-zinc-700/70" />
-                    <div className="absolute inset-[27%] rounded-full border border-zinc-700/60" />
-                    <div className="absolute inset-[34%] rounded-full bg-violet-600 border-2 border-violet-300/30 shadow-inner">
-                      <div className="absolute inset-[44%] rounded-full bg-zinc-100 shadow" />
-                      <span className="absolute inset-x-1 top-1/2 -translate-y-1/2 text-[7px] leading-none text-center text-violet-100 font-semibold truncate">
-                        {fileName}
-                      </span>
-                    </div>
-                    <div className="absolute inset-0 rounded-full bg-[linear-gradient(115deg,transparent_42%,rgba(255,255,255,0.11)_49%,transparent_56%)]" />
-                  </div>
-                </div>
+                    <defs>
+                      <linearGradient id={`wood-${id}`} x1="0" y1="0" x2="1" y2="1">
+                        <stop offset="0" stopColor="#5a3620" />
+                        <stop offset="0.45" stopColor="#7c4e2c" />
+                        <stop offset="0.7" stopColor="#63381f" />
+                        <stop offset="1" stopColor="#452817" />
+                      </linearGradient>
+                      <radialGradient id={`vignette-${id}`} cx="0.5" cy="0.42" r="0.85">
+                        <stop offset="0.55" stopColor="rgba(0,0,0,0)" />
+                        <stop offset="1" stopColor="rgba(15,6,2,0.42)" />
+                      </radialGradient>
+                      <radialGradient id={`platter-${id}`} cx="0.38" cy="0.34" r="0.9">
+                        <stop offset="0" stopColor="#a1a1aa" />
+                        <stop offset="0.55" stopColor="#71717a" />
+                        <stop offset="1" stopColor="#3f3f46" />
+                      </radialGradient>
+                      <radialGradient id={`label-${id}`} cx="0.42" cy="0.38" r="0.95">
+                        <stop offset="0" stopColor="#f0c869" />
+                        <stop offset="0.75" stopColor="#dfa63f" />
+                        <stop offset="1" stopColor="#b97f2a" />
+                      </radialGradient>
+                      <linearGradient id={`arm-${id}`} x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="0" stopColor="#71717a" />
+                        <stop offset="0.5" stopColor="#e4e4e7" />
+                        <stop offset="1" stopColor="#52525b" />
+                      </linearGradient>
+                      {/* Circle the flavour type sits on, just outside the spindle */}
+                      <path
+                        id={`labelarc-${id}`}
+                        d={`M ${HUB.x - 27} ${HUB.y} a 27 27 0 1 1 54 0 a 27 27 0 1 1 -54 0`}
+                      />
+                    </defs>
 
-                {/* Tonearm assembly */}
-                <div className="absolute right-4 top-4 h-9 w-9 rounded-full bg-zinc-300 border-[5px] border-zinc-600 shadow-[0_3px_8px_rgba(0,0,0,0.45)]">
-                  <div
-                    className="absolute left-1/2 top-1/2 h-[125px] w-2 origin-top -translate-x-1/2 rounded-full bg-gradient-to-r from-zinc-500 via-zinc-100 to-zinc-500 shadow-md transition-transform duration-700 ease-out"
-                    style={{ transform: `translateX(-50%) rotate(${38 - progress * 0.18}deg)` }}
+                    {/* Walnut plinth */}
+                    <rect width={DECK_W} height={DECK_H} fill={`url(#wood-${id})`} />
+                    {/* Grain — a few lazy contours, barely there */}
+                    <g stroke="#2b1a0e" strokeWidth="1" fill="none" opacity="0.3">
+                      <path d={`M0 36 C 110 30, 240 44, ${DECK_W} 34`} />
+                      <path d={`M0 92 C 150 84, 260 100, ${DECK_W} 90`} />
+                      <path d={`M0 168 C 120 176, 300 160, ${DECK_W} 172`} />
+                      <path d={`M0 226 C 140 220, 260 234, ${DECK_W} 224`} />
+                    </g>
+                    <rect width={DECK_W} height={DECK_H} fill={`url(#vignette-${id})`} />
+
+                    {/* Everything that spins: platter rim, strobe dots, vinyl,
+                        grooves and the paper label — name and all. */}
+                    {/* `animation: none` (rather than paused) when stopped, so
+                        the label settles upright and the name stays legible —
+                        a record frozen mid-spin leaves it upside down. */}
+                    <g
+                      className="deck-spin"
+                      style={isPlaying ? undefined : { animation: "none" }}
+                    >
+                      <circle cx={HUB.x} cy={HUB.y} r={R_PLATTER} fill={`url(#platter-${id})`} />
+                      {STROBE_DOTS.map((dot, i) => (
+                        <circle key={i} cx={dot.x} cy={dot.y} r="1.4" fill="#d4d4d8" opacity="0.55" />
+                      ))}
+                      <circle cx={HUB.x} cy={HUB.y} r={R_VINYL} fill="#0b0b0d" />
+                      {/* Grooves: fine rings, plus two brighter track separators */}
+                      {[0.94, 0.86, 0.78, 0.71, 0.64, 0.57, 0.5].map((f, i) => (
+                        <circle
+                          key={i}
+                          cx={HUB.x}
+                          cy={HUB.y}
+                          r={R_VINYL * f}
+                          fill="none"
+                          stroke="#27272a"
+                          strokeWidth={i === 1 || i === 4 ? 1.6 : 0.8}
+                          opacity={i === 1 || i === 4 ? 0.9 : 0.6}
+                        />
+                      ))}
+                      {/* Paper label */}
+                      <circle cx={HUB.x} cy={HUB.y} r={R_LABEL} fill={`url(#label-${id})`} stroke="#8a5a1d" strokeWidth="1" />
+                      <text
+                        x={HUB.x}
+                        y={HUB.y - 16}
+                        textAnchor="middle"
+                        fill="#4a2c10"
+                        fontSize={labelFontSize(fileName)}
+                        fontWeight="700"
+                        style={{ fontFamily: "Georgia, 'Times New Roman', serif" }}
+                        {...(fileName.length > 12
+                          ? { textLength: 64, lengthAdjust: "spacingAndGlyphs" as const }
+                          : {})}
+                      >
+                        {fileName.length > 30 ? `${fileName.slice(0, 29)}…` : fileName}
+                      </text>
+                      <text
+                        fill="#5c3a14"
+                        fontSize="5"
+                        fontWeight="600"
+                        letterSpacing="1.4"
+                      >
+                        <textPath href={`#labelarc-${id}`} startOffset="25%" textAnchor="middle">
+                          WATCH TOGETHER · LONG PLAY · 33⅓ RPM
+                        </textPath>
+                      </text>
+                      {/* Spindle */}
+                      <circle cx={HUB.x} cy={HUB.y} r="4" fill="#e4e4e7" stroke="#52525b" strokeWidth="1" />
+                    </g>
+
+                    {/* Anisotropic sheen — the light stays put while the record
+                        turns, which is what sells the spin. */}
+                    <path
+                      d={`M ${HUB.x} ${HUB.y} L ${HUB.x - 78} ${HUB.y - 70} A ${R_VINYL} ${R_VINYL} 0 0 1 ${HUB.x + 20} ${HUB.y - 102} Z`}
+                      fill="rgba(255,255,255,0.07)"
+                    />
+                    <path
+                      d={`M ${HUB.x} ${HUB.y} L ${HUB.x + 78} ${HUB.y + 70} A ${R_VINYL} ${R_VINYL} 0 0 1 ${HUB.x - 20} ${HUB.y + 102} Z`}
+                      fill="rgba(255,255,255,0.04)"
+                    />
+
+                    {/* Strobe lamp — glows when the platter turns */}
+                    <rect x="14" y={DECK_H - 34} width="24" height="15" rx="3" fill="#1c1917" stroke="#57534e" strokeWidth="1" />
+                    {isPlaying && <circle cx="26" cy={DECK_H - 26.5} r="7" fill="#f59e0b" opacity="0.28" />}
+                    <circle cx="26" cy={DECK_H - 26.5} r="3.2" fill={isPlaying ? "#fbbf24" : "#451a03"} />
+
+                    {/* Tonearm: rest → outer groove at 0:00 → label run-out at
+                        the end, by geometry rather than guesswork. */}
+                    <circle cx={PIVOT.x} cy={PIVOT.y} r="17" fill={`url(#platter-${id})`} stroke="#3f3f46" strokeWidth="2" />
+                    <g style={{ transform: `translate(${PIVOT.x}px, ${PIVOT.y}px)` }}>
+                      <g
+                        style={{
+                          transform: `rotate(${
+                            fileName && duration > 0
+                              ? armAngleAt(
+                                  R_GROOVE_OUT -
+                                    (R_GROOVE_OUT - R_LABEL) * Math.min(1, currentTime / duration),
+                                )
+                              : ARM_REST_DEG
+                          }deg)`,
+                          transition: "transform 0.9s ease-in-out",
+                        }}
+                      >
+                        {/* Counterweight behind the bearing */}
+                        <circle cx="-26" cy="0" r="10" fill="#3f3f46" stroke="#18181b" strokeWidth="1.5" />
+                        <rect x="-30" y="-2" width="14" height="4" rx="2" fill="#52525b" />
+                        {/* Arm tube */}
+                        <rect x="-8" y="-2.6" width={ARM_LENGTH - 16} height="5.2" rx="2.6" fill={`url(#arm-${id})`} />
+                        {/* Headshell + cartridge, stylus tip at exactly ARM_LENGTH */}
+                        <path
+                          d={`M ${ARM_LENGTH - 30} -4.2 L ${ARM_LENGTH - 4} -6 L ${ARM_LENGTH} 0 L ${ARM_LENGTH - 4} 6 L ${ARM_LENGTH - 30} 4.2 Z`}
+                          fill="#18181b"
+                          stroke="#3f3f46"
+                          strokeWidth="1"
+                        />
+                        <circle cx={ARM_LENGTH - 2} cy="1.8" r="1.5" fill="#e4e4e7" />
+                        {/* Bearing cap */}
+                        <circle cx="0" cy="0" r="6.5" fill="#e4e4e7" stroke="#52525b" strokeWidth="1.5" />
+                      </g>
+                    </g>
+
+                    {/* Corner screws — the plinth is furniture */}
+                    {[
+                      [10, 10],
+                      [DECK_W - 10, 10],
+                      [10, DECK_H - 10],
+                      [DECK_W - 10, DECK_H - 10],
+                    ].map(([sx, sy], i) => (
+                      <g key={i} opacity="0.7">
+                        <circle cx={sx} cy={sy} r="3" fill="#52525b" stroke="#1c1917" strokeWidth="0.8" />
+                        <path d={`M ${sx - 1.8} ${sy} h 3.6 M ${sx} ${sy - 1.8} v 3.6`} stroke="#1c1917" strokeWidth="0.7" />
+                      </g>
+                    ))}
+                  </svg>
+
+                  {/* Play/pause — a real button over the deck, bottom-right */}
+                  <button
+                    onClick={togglePlay}
+                    className={`absolute bottom-[6%] right-[3.5%] flex h-10 w-10 items-center justify-center rounded-full border shadow-lg transition-colors ${
+                      isPlaying
+                        ? "bg-amber-500 border-amber-200 text-stone-900"
+                        : "bg-zinc-800 border-zinc-500 text-zinc-200 hover:bg-zinc-700"
+                    }`}
+                    aria-label={isPlaying ? "Pause" : "Play"}
                   >
-                    <div className="absolute -bottom-3 left-1/2 h-5 w-3 -translate-x-1/2 rounded-sm bg-zinc-800 shadow" />
-                  </div>
+                    {isPlaying ? (
+                      <svg className="h-4 w-4" viewBox="0 0 24 24" fill="currentColor">
+                        <path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z" />
+                      </svg>
+                    ) : (
+                      <svg className="h-4 w-4 translate-x-px" viewBox="0 0 24 24" fill="currentColor">
+                        <path d="M8 5v14l11-7z" />
+                      </svg>
+                    )}
+                  </button>
                 </div>
-
-                {/* Deck controls */}
-                <button
-                  onClick={togglePlay}
-                  className={`absolute bottom-3 right-3 flex h-10 w-10 items-center justify-center rounded-full border shadow-lg transition-colors ${
-                    isPlaying
-                      ? "bg-violet-600 border-violet-300 text-white"
-                      : "bg-zinc-800 border-zinc-500 text-zinc-200 hover:bg-zinc-700"
-                  }`}
-                  aria-label={isPlaying ? "Pause" : "Play"}
-                >
-                  {isPlaying ? (
-                    <svg className="h-4 w-4" viewBox="0 0 24 24" fill="currentColor">
-                      <path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z" />
-                    </svg>
-                  ) : (
-                    <svg className="h-4 w-4 translate-x-px" viewBox="0 0 24 24" fill="currentColor">
-                      <path d="M8 5v14l11-7z" />
-                    </svg>
-                  )}
-                </button>
-                <div className={`absolute right-5 bottom-16 h-2 w-2 rounded-full transition-colors ${isPlaying ? "bg-emerald-400 shadow-[0_0_8px_#34d399]" : "bg-red-950"}`} />
               </div>
 
               {/* Track name + swap file button */}
