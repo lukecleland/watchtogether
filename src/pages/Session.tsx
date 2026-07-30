@@ -1464,14 +1464,14 @@ export function Session({ roomCode, isHost }: SessionProps) {
 					)
 				)}
 				{localStream && localStream.getTracks().length > 0 && (
-					<DraggablePanel state={fixedPanels.local} {...makePanelHandlers('local')} minWidth={200} minHeight={120} scale={canvas.scale} className="z-10">
+					<DraggablePanel state={fixedPanels.local} {...makePanelHandlers('local')} onToggleDock={() => toggleDock('local')} minWidth={200} minHeight={120} scale={canvas.scale} className="z-10">
 						{zoomTagHandle('local', 'You')}
 						<VideoPanel stream={localStream} label="You" muted docked={dockedIds.includes('local')} onToggleDock={() => toggleDock('local')} />
 					</DraggablePanel>
 				)}
 
 				{status === 'connected' && (
-					<DraggablePanel state={fixedPanels.remote} {...makePanelHandlers('remote')} minWidth={200} minHeight={120} scale={canvas.scale} className="z-10">
+					<DraggablePanel state={fixedPanels.remote} {...makePanelHandlers('remote')} onToggleDock={() => toggleDock('remote')} minWidth={200} minHeight={120} scale={canvas.scale} className="z-10">
 						{zoomTagHandle('remote', 'Guest')}
 						<VideoPanel stream={remoteStream} label="Guest" docked={dockedIds.includes('remote')} onToggleDock={() => toggleDock('remote')} />
 					</DraggablePanel>
@@ -1482,6 +1482,7 @@ export function Session({ roomCode, isHost }: SessionProps) {
 						key={panel.id}
 						state={panel.state}
 						{...makeDynamicPanelHandlers(panel.id)}
+						onToggleDock={() => toggleDock(panel.id)}
 						minWidth={panel.type === 'browser' ? 360 : panel.type === 'youtube' ? 280 : 260}
 						minHeight={panel.type === 'browser' ? 240 : 60}
 						scale={canvas.scale}>
