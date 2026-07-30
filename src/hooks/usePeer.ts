@@ -32,16 +32,43 @@ interface UsePeerResult {
 
 type RoomRole = "owner" | "joiner";
 
+/**
+ * TURN is required when a direct route cannot cross both peers' NATs (common
+ * for two phones on cellular). Multiple URLs may be supplied so providers can
+ * expose UDP, TCP, and TLS/443 routes:
+ *
+ * VITE_TURN_URLS=turn:turn.example.com:3478,turns:turn.example.com:5349
+ * VITE_TURN_USERNAME=...
+ * VITE_TURN_CREDENTIAL=...
+ */
+function configuredIceServers(): RTCIceServer[] {
+  const servers: RTCIceServer[] = [
+    { urls: "stun:stun.l.google.com:19302" },
+    { urls: "stun:stun1.l.google.com:19302" },
+    { urls: "stun:stun2.l.google.com:19302" },
+    { urls: "stun:stun3.l.google.com:19302" },
+    { urls: "stun:stun4.l.google.com:19302" },
+  ];
+  const urls = import.meta.env.VITE_TURN_URLS?.split(",")
+    .map((url: string) => url.trim())
+    .filter(Boolean);
+  const username = import.meta.env.VITE_TURN_USERNAME?.trim();
+  const credential = import.meta.env.VITE_TURN_CREDENTIAL?.trim();
+
+  if (urls?.length && username && credential) {
+    servers.push({ urls, username, credential });
+  }
+  return servers;
+}
+
 const peerOptions: NonNullable<ConstructorParameters<typeof Peer>[1]> = {
   debug: 0,
   config: {
-    iceServers: [
-      { urls: "stun:stun.l.google.com:19302" },
-      { urls: "stun:stun1.l.google.com:19302" },
-      { urls: "stun:stun2.l.google.com:19302" },
-      { urls: "stun:stun3.l.google.com:19302" },
-      { urls: "stun:stun4.l.google.com:19302" },
-    ],
+    iceServers: configuredIceServers(),
+    // Gathering relay candidates up front avoids a second negotiation delay
+    // on mobile Safari when a direct route fails.
+    iceCandidatePoolSize: 10,
+    iceTransportPolicy: "all",
     sdpSemantics: "unified-plan",
   },
 };

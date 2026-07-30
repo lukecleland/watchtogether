@@ -33,6 +33,7 @@ import { VideoPanel } from '../components/VideoPanel';
 import { YoutubeWidget } from '../components/YoutubeWidget';
 import { AudioPlayer } from '../components/AudioPlayer';
 import { StickyNote } from '../components/StickyNote';
+import { BrowserWidget } from '../components/BrowserWidget';
 import { DraggablePanel } from '../components/DraggablePanel';
 import { Whiteboard, type WhiteboardHandle, type WhiteboardStroke, type WhiteboardText } from '../components/Whiteboard';
 import type { Nib, TextFont } from '../utils/brush';
@@ -286,6 +287,16 @@ export function Session({ roomCode, isHost }: SessionProps) {
 					...(msg.videoId ? { initialVideoId: msg.videoId } : {})
 				}
 			]);
+		} else if (msg.type === 'spawn-browser') {
+			setDynamicPanels(prev => [
+				...prev,
+				{
+					id: msg.id,
+					type: 'browser' as const,
+					state: denormalisePanel(msg.state),
+					...(msg.url ? { initialUrl: msg.url } : {})
+				}
+			]);
 		} else if (msg.type === 'spawn-audio') {
 			let initialFile: File | undefined;
 			if (msg.dataB64 && msg.fileName && msg.mimeType) {
@@ -483,6 +494,7 @@ export function Session({ roomCode, isHost }: SessionProps) {
 			remote: 480,
 			audio: 360,
 			note: 420,
+			browser: 760,
 			position: 0
 		};
 
@@ -545,7 +557,7 @@ export function Session({ roomCode, isHost }: SessionProps) {
 			const firstLine = text.split('\n')[0].trim();
 			if (kind === 'text' && firstLine) return firstLine.slice(0, 40);
 		}
-		const base = panel.type === 'youtube' ? 'YouTube' : panel.type === 'note' ? 'Note' : 'Audio';
+		const base = panel.type === 'youtube' ? 'YouTube' : panel.type === 'note' ? 'Note' : panel.type === 'browser' ? 'Browser' : 'Audio';
 		const sameType = dynamicPanels.filter(p => p.type === panel.type);
 		if (sameType.length < 2) return base;
 		return `${base} ${sameType.findIndex(p => p.id === panel.id) + 1}`;
@@ -634,15 +646,15 @@ export function Session({ roomCode, isHost }: SessionProps) {
 	// Spawn a new dynamic panel at the given screen position (screen coords → world coords).
 	// Pass fromRemote=true when applying a remote-initiated spawn (skips sync to avoid loops).
 	const spawnPanel = (
-		type: 'youtube' | 'audio' | 'note',
+		type: 'youtube' | 'audio' | 'browser' | 'note',
 		screenX: number,
 		screenY: number,
-		extra?: { initialVideoId?: string; initialFile?: File; note?: NoteContent },
+		extra?: { initialVideoId?: string; initialFile?: File; initialUrl?: string; note?: NoteContent },
 		remoteId?: string
 	) => {
 		const { x: tx, y: ty, scale } = canvasStateRef.current;
-		const w = type === 'youtube' ? 320 : type === 'note' ? 240 : 300;
-		const h = type === 'youtube' ? 260 : type === 'note' ? 220 : 175;
+		const w = type === 'browser' ? 560 : type === 'youtube' ? 320 : type === 'note' ? 240 : 300;
+		const h = type === 'browser' ? 420 : type === 'youtube' ? 260 : type === 'note' ? 220 : 175;
 		const worldX = (screenX - tx) / scale - w / 2;
 		const worldY = (screenY - ty) / scale - h / 2;
 		const nextZ = ++topZRef.current;
@@ -654,6 +666,8 @@ export function Session({ roomCode, isHost }: SessionProps) {
 		if (!remoteId) {
 			if (type === 'youtube') {
 				sendSync({ type: 'spawn-youtube', id, videoId: extra?.initialVideoId, state: normalisePanel(state) });
+			} else if (type === 'browser') {
+				sendSync({ type: 'spawn-browser', id, url: extra?.initialUrl, state: normalisePanel(state) });
 			} else if (type === 'audio') {
 				if (extra?.initialFile) {
 					const file = extra.initialFile;
@@ -1079,6 +1093,16 @@ export function Session({ roomCode, isHost }: SessionProps) {
 						</svg>
 						<span className="hidden sm:inline">Audio</span>
 					</button>
+					<button
+						onClick={() => spawnPanel('browser', window.innerWidth / 2, window.innerHeight / 2)}
+						className="flex items-center gap-1 sm:gap-1.5 bg-zinc-800 hover:bg-zinc-700 active:bg-zinc-600 border border-zinc-700 text-zinc-300 text-xs font-medium px-2 sm:px-3 py-1.5 rounded-lg transition-colors"
+						title="Add a mini browser">
+						<svg className="w-3.5 h-3.5 text-sky-400 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+							<rect x="3" y="4" width="18" height="16" rx="2" />
+							<path d="M3 9h18M7 6.5h.01M10 6.5h.01" strokeLinecap="round" />
+						</svg>
+						<span className="hidden sm:inline">Browser</span>
+					</button>
 				</div>
 
 				{isHost && (
@@ -1209,8 +1233,8 @@ export function Session({ roomCode, isHost }: SessionProps) {
 						key={panel.id}
 						state={panel.state}
 						{...makeDynamicPanelHandlers(panel.id)}
-						minWidth={panel.type === 'youtube' ? 280 : 260}
-						minHeight={60}
+						minWidth={panel.type === 'browser' ? 360 : panel.type === 'youtube' ? 280 : 260}
+						minHeight={panel.type === 'browser' ? 240 : 60}
 						scale={canvas.scale}>
 						{panel.type === 'note' ? (
 							<StickyNote
@@ -1230,7 +1254,7 @@ export function Session({ roomCode, isHost }: SessionProps) {
 								onToggleDock={() => toggleDock(panel.id)}
 								onTitleChange={title => setPanelLabels(prev => ({ ...prev, [panel.id]: title }))}
 							/>
-						) : (
+						) : panel.type === 'audio' ? (
 							<AudioPlayer
 								id={panel.id}
 								dataConnection={dataConnection}
@@ -1240,6 +1264,16 @@ export function Session({ roomCode, isHost }: SessionProps) {
 								docked={dockedIds.includes(panel.id)}
 								onToggleDock={() => toggleDock(panel.id)}
 								onTrackChange={name => setPanelLabels(prev => ({ ...prev, [panel.id]: name }))}
+							/>
+						) : (
+							<BrowserWidget
+								id={panel.id}
+								dataConnection={dataConnection}
+								initialUrl={panel.initialUrl}
+								onClose={() => removePanel(panel.id)}
+								docked={dockedIds.includes(panel.id)}
+								onToggleDock={() => toggleDock(panel.id)}
+								onTitleChange={title => setPanelLabels(prev => ({ ...prev, [panel.id]: title }))}
 							/>
 						)}
 					</DraggablePanel>
