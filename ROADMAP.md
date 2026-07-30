@@ -19,8 +19,12 @@ added. So the work is split:
 
 ### Proposed features
 
-- [ ] **Free-type text on the canvas** — a text tool alongside pen/eraser. Text
-      as movable, editable canvas objects, synced like strokes and panels.
+- [x] **Free-type text on the canvas** — done (#10). Landed as a *canvas tool*
+      rather than a spawned panel: the top bar spawns panels, the tool island
+      acts on the canvas. A sticky note is a container; canvas text is a label,
+      and wrapping one word in a bordered panel is too much furniture. Text is
+      stored in the same ordered list as strokes so the eraser still works on
+      it, and can be clicked to re-edit or cleared to delete.
 - [x] **~~Pin items to a bar~~ → the dock** — done in #2, refined in #3. A bar
       of bookmarks into the canvas: tag a panel, click its chip to fly there.
       The panel never moves — this is navigation, not relocation — and the jump
@@ -64,78 +68,67 @@ added. So the work is split:
 
 ### Canvas tools
 
-The tool rail is currently pen, eraser, eight colour swatches, three sizes and
-clear — about fifteen controls in a flat strip. Everything below roughly triples
-what it holds, so the restructure comes first or we build a bad UI one good
-feature at a time. Items are grouped the way they'd ship: one push each.
+The tool rail was pen, eraser, eight colour swatches, three sizes and clear —
+fifteen controls in a flat strip. The restructure came first so the rest could
+be added without building a bad UI one good feature at a time.
 
-- [ ] **1 · Restructure the tool rail** — grouped tools with fly-out panels
-      instead of a flat list. Pen opens its nib choice, shapes open shape choice,
-      the eight swatches collapse to a single swatch showing the current colour.
-      Deliberately no new features in this one, so it can be judged as a UI
-      change on its own.
+- [x] **1 · Restructure the tool rail** — done (#7, refined in #10). Landed as a
+      floating **island** rather than the fixed left rail first sketched: tools
+      only, with colour, nib and size in a panel that appears for the selected
+      tool and nothing else.
 
-      Decided while mocking it up: the rail becomes **fixed to the left edge**
-      rather than a floating draggable panel. On narrow screens it narrows and
-      overflows into a "more" button, and fly-outs become a bottom sheet — which
-      has to sit *above* the dock, since both want the bottom of the screen.
+      Reworked once in use. The first version had pen, eraser *and* a colour
+      swatch all opening the same panel — three buttons, one outcome. The swatch
+      is gone; the pen button now carries the colour it will draw with, and the
+      active tool shows a chevron so "tap again for options" is visible rather
+      than folklore.
 
-- [ ] **2 · Brush engine — nibs, colour picker, metallics** — one push because
-      all three touch the same stroke rendering and the same sync message;
-      splitting them guarantees conflicts.
-      - Nibs: ballpoint (today's behaviour), fountain pen (width from stroke
-        speed), pencil, charcoal, highlighter, neon.
-      - **Highlighter carries its own colour set** rather than the current pen
-        colour — highlighting in white is useless.
-      - Colour: one swatch opening a picker with the standard palette, recents,
-        and an arbitrary-colour input.
-      - Metallics (gold, silver, copper, bronze) rendered as a gradient
-        *perpendicular* to each segment — dark edge, bright core, dark edge — so
-        they read as metal rather than as flat yellow. Sync as a token like
-        `metal:gold`, the same shape as the existing `__eraser__` sentinel.
+- [x] **2 · Brush engine — nibs, colour picker, metallics** — done (#9). All six
+      nibs, four metallics, arbitrary colour, and the highlighter carries its own
+      bright palette since highlighting in white does nothing.
 
-      ⚠️ Pencil and charcoal texture **must be seeded from stroke coordinates**.
-      Strokes are re-rendered on every pan and zoom, so unseeded randomness makes
-      the grain reshuffle and the whole board visibly crawl.
+      The seeding warning was real. Pencil and charcoal are seeded from their own
+      coordinates; verified by redrawing after a zoom and getting an *identical*
+      pixel count, which unseeded randomness could not produce. The fountain
+      taper is baked in when drawn, since replay has no timing to derive speed
+      from — measured at 22px slow against 10px fast.
 
-- [ ] **3 · Region tags** — extends the position tags that already exist. A
-      long-press currently drops a point tag; this adds *drag a box* to tag an
-      area. Because a region has bounds it can zoom-to-fit on jump (a point can
-      only preserve the current scale) and it draws a frame around what was
-      tagged. The motivating case is handwriting: strokes aren't panels, so a
-      region is the only way to bookmark something you drew.
+      Metallics need width to read as metal: at size S a thin line is just a
+      coloured line, which is a limitation rather than a bug.
 
-- [ ] **4 · Sticky notes** — text as canvas objects: draggable, resizable,
-      colour choice, synced. Reuses `DraggablePanel` and the spawn machinery, and
-      satisfies the "free-type text" item above. Best value-per-effort here.
+- [x] **3 · Region tags** — done (#13). A selected area is an **asset** with a
+      header, a tag button and a close button, rather than a bare frame, and
+      tagging it is a separate act from creating it. Extends the existing point
+      tags with optional bounds instead of adding a rival concept: no bounds is
+      the point flag unchanged; bounds means it frames its content and zooms to
+      fit rather than creeping closer each visit.
 
-- [ ] **5 · Music stickies** — variants of the sticky note, aimed at the way this
-      app actually gets used.
-      - **Chord diagrams** — the six-by-five grid with dots for finger positions.
-        Trivial SVG, and the most direct way to say "play *this*" remotely.
-      - **Guitar tab** — a monospace text area with `e B G D A E` down the side.
-        No library needed.
-      - **Manuscript paper** — a sticky pre-printed with blank staves (or blank
-        tab) that you **handwrite on with the existing pen**. Cheapest of the
-        three and possibly the most used: writing a melody by hand mid-session is
-        faster than typing notation, and the pen is already there.
-      - *Parked:* full standard notation via `abcjs`. Technically fine, but it
-        means authoring ABC text (`|:G2AB c2BA:|`) live — a beautiful feature
-        nobody would touch unless they already read and write ABC.
+      ⚠️ Tags travel as **viewport fractions**, not world pixels. Sending pixels
+      made the receiver scale them a second time and threw its canvas a million
+      pixels away, taking both video feeds with it. Test positional features with
+      the two peers at *different* window sizes — identical sizes hide this
+      entirely.
+
+- [x] **4 · Sticky notes** — done (#6). Text, chord and tab faces in one panel,
+      each keeping its own content so switching never discards anything.
+
+- [x] **5 · Music stickies** — chord diagrams and guitar tab done (#6), with
+      several chord diagrams per note (#16). **Manuscript paper is still open** —
+      a note pre-printed with blank staves to handwrite on, which is the cheapest
+      of the three and possibly the most useful. ABC notation stays parked.
 
 - [ ] **6 · Shapes** — rectangle, ellipse, line, arrow, with shift-constrain.
       Arrows especially: pointing at things is the commonest annotation need and
-      freehand arrows always look scrappy. Depends on 1.
+      freehand arrows always look scrappy.
 
 - [ ] **7 · Images — stickers, drop and paste** — emoji stickers, custom image
-      upload, drag-drop, and ⌘V from the clipboard. One push because they share
-      an ingest path, and that path needs building: downscale to ~512px and
-      re-encode before sending, since the current base64-over-data-channel
-      transfer will choke on a phone photo. Also closes the image-drop item.
+      upload, drag-drop, and ⌘V. **The transfer work this was blocked on is now
+      done** (#15), so this is unblocked: it needs image rendering on the canvas
+      and downscaling before send, not a new transfer mechanism.
 
 - [ ] **8 · Laser pointer** — a trail that fades after about a second and is
-      never stored. For "look, *here*" mid-conversation without permanently
-      marking the board. Fully independent of everything else.
+      never stored. For "look, *here*" without permanently marking the board.
+      Fully independent of everything else.
 
 - [ ] **9 · Eyedropper and an explicit pan/select tool** — pick a colour off the
       canvas; and a real cursor-mode button, since space-to-pan is undiscoverable
@@ -155,27 +148,29 @@ feature at a time. Items are grouped the way they'd ship: one push each.
 From a read-through of the current code — a mix of gaps, quick wins and one
 outright bug.
 
-- [ ] **Fix: multiple YouTube panels cross-sync** — playback messages
+- [ ] **Fix: multiple YouTube panels cross-sync** — *still open, re-verified 30
+      July 2026: `load`/`play`/`pause`/`seek` in `SyncMessage` carry no id.* — playback messages
       (`load`/`play`/`pause`/`seek`) carry no panel id, so with two YouTube
       players open, both react to every message. Panel *layout* messages have
       ids; playback ones don't. Well-scoped first PR.
 - [x] **Join without camera** — done. A `getUserMedia` failure now substitutes an
       empty `MediaStream` and joins receive-only rather than showing a blocking
       error screen.
-- [ ] **Late-join / rejoin state handoff (P2P)** — *now the most valuable item
-      on this list.* When a guest connects or reconnects, the host re-sends
-      current state over the data channel. Needs no database, and it builds the
-      "serialise a session" machinery that Phase 2 then reuses.
+- [ ] **Late-join / rejoin state handoff (P2P)** — *still the most valuable item
+      on this list, and more so than when it was written.* When a guest connects
+      or reconnects, the host re-sends current state over the data channel. Needs
+      no database, and it builds the "serialise a session" machinery Phase 2 then
+      reuses to hydrate a saved board.
 
-      Three features now depend on it, which is why it's worth doing as one job:
-      whiteboard strokes, spawned panels and the loaded video are all invisible
-      to a late joiner — and so are dock bookmarks, since tags are only sent at
-      the moment of tagging. Join a session five minutes late and you get a
-      blank canvas and an empty bar.
+      It now covers six kinds of content, not three: whiteboard strokes, canvas
+      text, spawned panels, the loaded video, dock bookmarks and area tags are
+      all invisible to a late joiner. Join five minutes late and you get a blank
+      canvas and an empty bar.
 - [ ] **Live cursors** — show the other person's cursor on the canvas. Cheap to
       sync, and the natural companion to shared tags: a tag says "this thing
       matters", a cursor says "this bit, right here, right now".
-- [ ] **Image drop** — drag an image onto the canvas and both sides see it, same
+- [ ] **Image drop** — *unblocked by the chunked transfer in #15; needs image
+      rendering on the canvas and downscaling before send.* — drag an image onto the canvas and both sides see it, same
       mechanism as the existing audio-file drop. Wants a file-size guard: the
       current base64-in-one-message transfer will struggle on large files.
 - [ ] **Screen share** — `getDisplayMedia` as an additional panel. Natural fit
@@ -190,12 +185,31 @@ outright bug.
       and re-establishes the room role rather than the status badge going quiet.
 - [x] **Synced audio playback** — done. Audio panels share play / pause / seek
       over the data channel (`audio-play`, `audio-pause`, `audio-seek`).
-- [ ] **Longer room codes** — currently one word from a 503-word list, which is
+- [ ] **Longer room codes** — *still one word from 503, re-verified 30 July.* — currently one word from a 503-word list, which is
       guessable. Two or three words is cheap to do now and matters much more
       once boards persist (see Phase 2).
-- [ ] **Sync z-order for spawned panels** — bring-to-front updates z locally but
-      never syncs it. The fixed video panels do sync. (Still open as of the dock
-      work — `makeDynamicPanelHandlers`.)
+- [x] **Sync z-order for spawned panels** — done (#8). Fixing it turned up a
+      worse sibling: the two peers' z counters drifted apart, so a panel you
+      spawned could land *underneath* one the other person had raised and be
+      completely unclickable. Both fixed together.
+
+### Also landed, unplanned
+
+Things that came out of using the app rather than from this list.
+
+- [x] **The dock** — shared bookmarks with rename, per-content-type auto-zoom on
+      jump, and a **ping** to make a bookmark pulse on the other person's screen
+      (#2, #3, #12). Tagging and renaming are shared; dismissing is local, so
+      neither person can clear the other's bar.
+- [x] **Paste onto the canvas** (#14) — text becomes canvas text, a YouTube link
+      becomes a player, any other link becomes a browser panel. Images
+      deliberately excluded until there's image support.
+- [x] **Chunked file transfer** (#15) — replaces base64-ing a whole file into one
+      message. This is the groundwork images, stickers and image paste all need.
+      Verified by sha256 on a 12MB file across a real connection.
+- [x] **Full-size tag handles when zoomed out** (#17) — below 45% zoom a panel
+      header is ~9px tall and untaggable, which left anything untagged
+      unreachable. Untagged panels now carry a counter-scaled handle.
 
 ### Infrastructure
 
