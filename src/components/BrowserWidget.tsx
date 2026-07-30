@@ -1,5 +1,5 @@
 import { useCallback, useState } from "react";
-import type { DataConnection } from "peerjs";
+import type { RoomDataConnection } from "../hooks/usePeer";
 import { DockButton } from "./Dock";
 import { useYouTubeSync, type SyncMessage } from "../hooks/useYouTubeSync";
 
@@ -28,7 +28,7 @@ export function BrowserWidget({
   onTitleChange,
 }: {
   id: string;
-  dataConnection: DataConnection | null;
+  dataConnection: RoomDataConnection | null;
   initialUrl?: string;
   onClose?: () => void;
   docked?: boolean;

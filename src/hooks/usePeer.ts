@@ -1,21 +1,80 @@
 import { useState, useEffect, useRef } from "react";
 import Peer, { type DataConnection, type MediaConnection } from "peerjs";
 
-/**
- * Manages a two-person PeerJS room whose ownership can move between clients.
- *
- * The client that owns `roomCode` accepts incoming connections. The other
- * client has an anonymous PeerJS ID and dials the room owner. If the owner
- * leaves, the remaining client claims `roomCode`; if the old owner returns, it
- * sees that the ID is taken and automatically becomes the joining client.
- */
+export type PeerStatus = "idle" | "connecting" | "waiting" | "connected" | "error";
 
-export type PeerStatus =
-  | "idle"
-  | "connecting"
-  | "waiting"
-  | "connected"
-  | "error";
+export interface RemotePeerStream {
+  peerId: string;
+  stream: MediaStream;
+}
+
+/**
+ * A stable, DataConnection-compatible facade over every connection in the
+ * room. Existing sync hooks can listen once and broadcast without knowing
+ * whether the room currently contains one, two, or three remote peers.
+ */
+export interface RoomDataConnection {
+  readonly open: boolean;
+  readonly dataChannel?: RTCDataChannel;
+  on(event: "data", listener: (data: unknown) => void): void;
+  off(event: "data", listener: (data: unknown) => void): void;
+  send(data: unknown): void;
+}
+
+class MeshDataConnection implements RoomDataConnection {
+  private connections = new Map<string, DataConnection>();
+  private listeners = new Set<(data: unknown) => void>();
+
+  get open() {
+    return [...this.connections.values()].some(connection => connection.open);
+  }
+
+  get dataChannel() {
+    return [...this.connections.values()].find(connection => connection.open)?.dataChannel;
+  }
+
+  on(_event: "data", listener: (data: unknown) => void) {
+    this.listeners.add(listener);
+  }
+
+  off(_event: "data", listener: (data: unknown) => void) {
+    this.listeners.delete(listener);
+  }
+
+  emit(data: unknown) {
+    this.listeners.forEach(listener => listener(data));
+  }
+
+  add(connection: DataConnection) {
+    this.connections.set(connection.peer, connection);
+  }
+
+  remove(peerId: string, connection: DataConnection) {
+    if (this.connections.get(peerId) === connection) this.connections.delete(peerId);
+  }
+
+  has(peerId: string) {
+    return this.connections.get(peerId)?.open ?? false;
+  }
+
+  peers() {
+    return [...this.connections.entries()]
+      .filter(([, connection]) => connection.open)
+      .map(([peerId]) => peerId);
+  }
+
+  send(data: unknown) {
+    for (const connection of this.connections.values()) {
+      if (connection.open) connection.send(data);
+    }
+  }
+
+  closeAll() {
+    const connections = [...this.connections.values()];
+    this.connections.clear();
+    connections.forEach(connection => connection.close());
+  }
+}
 
 interface UsePeerOptions {
   roomCode: string;
@@ -24,23 +83,47 @@ interface UsePeerOptions {
 }
 
 interface UsePeerResult {
-  remoteStream: MediaStream | null;
-  dataConnection: DataConnection | null;
+  remoteStreams: RemotePeerStream[];
+  dataConnection: RoomDataConnection | null;
+  participantCount: number;
   status: PeerStatus;
   error: string | null;
 }
 
 type RoomRole = "owner" | "joiner";
+type MeshControl =
+  | { __watchTogether: "roster"; peers: string[] }
+  | { __watchTogether: "room-full" };
 
-/**
- * TURN is required when a direct route cannot cross both peers' NATs (common
- * for two phones on cellular). Multiple URLs may be supplied so providers can
- * expose UDP, TCP, and TLS/443 routes:
- *
- * VITE_TURN_URLS=turn:turn.example.com:3478,turns:turn.example.com:5349
- * VITE_TURN_USERNAME=...
- * VITE_TURN_CREDENTIAL=...
- */
+const MAX_PARTICIPANTS = 4;
+
+function isMeshControl(data: unknown): data is MeshControl {
+  return (
+    typeof data === "object" &&
+    data !== null &&
+    "__watchTogether" in data
+  );
+}
+
+function identifyPeerMessage(
+  data: unknown,
+  sourcePeerId: string,
+  localPeerId: string,
+): unknown {
+  if (typeof data !== "object" || data === null || !("id" in data)) return data;
+  const message = data as { id?: unknown };
+  if (message.id === "local") {
+    return { ...data, id: `remote-peer:${sourcePeerId}` };
+  }
+  if (
+    typeof message.id === "string" &&
+    message.id === `remote-peer:${localPeerId}`
+  ) {
+    return { ...data, id: "local" };
+  }
+  return data;
+}
+
 function configuredIceServers(): RTCIceServer[] {
   const servers: RTCIceServer[] = [
     { urls: "stun:stun.l.google.com:19302" },
@@ -54,7 +137,6 @@ function configuredIceServers(): RTCIceServer[] {
     .filter(Boolean);
   const username = import.meta.env.VITE_TURN_USERNAME?.trim();
   const credential = import.meta.env.VITE_TURN_CREDENTIAL?.trim();
-
   if (urls?.length && username && credential) {
     servers.push({ urls, username, credential });
   }
@@ -65,8 +147,6 @@ const peerOptions: NonNullable<ConstructorParameters<typeof Peer>[1]> = {
   debug: 0,
   config: {
     iceServers: configuredIceServers(),
-    // Gathering relay candidates up front avoids a second negotiation delay
-    // on mobile Safari when a direct route fails.
     iceCandidatePoolSize: 10,
     iceTransportPolicy: "all",
     sdpSemantics: "unified-plan",
@@ -78,137 +158,223 @@ export function usePeer({
   isHost,
   localStream,
 }: UsePeerOptions): UsePeerResult {
-  const [remoteStream, setRemoteStream] = useState<MediaStream | null>(null);
-  const [dataConnection, setDataConnection] = useState<DataConnection | null>(
-    null,
-  );
+  const [remoteStreams, setRemoteStreams] = useState<RemotePeerStream[]>([]);
+  const [dataConnection, setDataConnection] = useState<RoomDataConnection | null>(null);
+  const [participantCount, setParticipantCount] = useState(1);
   const [status, setStatus] = useState<PeerStatus>("idle");
   const [error, setError] = useState<string | null>(null);
 
   const peerRef = useRef<Peer | null>(null);
-  const callRef = useRef<MediaConnection | null>(null);
-  const dataConnRef = useRef<DataConnection | null>(null);
+  const meshRef = useRef(new MeshDataConnection());
 
   useEffect(() => {
     if (!localStream) return;
 
     let active = true;
     let role: RoomRole = isHost ? "owner" : "joiner";
+    let roomFull = false;
     let transitionTimer: ReturnType<typeof setTimeout> | null = null;
     let signalingTimer: ReturnType<typeof setTimeout> | null = null;
     const roomId = roomCode.toLowerCase();
+    const mesh = meshRef.current;
+    const dataConnections = new Map<string, DataConnection>();
+    const calls = new Map<string, MediaConnection>();
+    const streams = new Map<string, MediaStream>();
 
-    const clearTransitionTimer = () => {
-      if (!transitionTimer) return;
-      clearTimeout(transitionTimer);
+    const publishStreams = () => {
+      setRemoteStreams(
+        [...streams.entries()].map(([peerId, stream]) => ({ peerId, stream })),
+      );
+    };
+
+    const publishConnectionState = () => {
+      setParticipantCount(mesh.peers().length + 1);
+      if (mesh.open) {
+        setDataConnection(mesh);
+        setStatus("connected");
+        setError(null);
+      } else {
+        setDataConnection(null);
+        setStatus(role === "owner" ? "waiting" : "connecting");
+      }
+    };
+
+    const clearTransition = () => {
+      if (transitionTimer) clearTimeout(transitionTimer);
       transitionTimer = null;
     };
 
-    const clearConnections = () => {
-      const call = callRef.current;
-      const data = dataConnRef.current;
-      callRef.current = null;
-      dataConnRef.current = null;
-      call?.close();
-      data?.close();
-      setRemoteStream(null);
+    const clearMesh = () => {
+      dataConnections.clear();
+      mesh.closeAll();
+      for (const call of calls.values()) call.close();
+      calls.clear();
+      streams.clear();
+      setRemoteStreams([]);
       setDataConnection(null);
+      setParticipantCount(1);
     };
 
-    const setupDataConnection = (conn: DataConnection) => {
-      const previous = dataConnRef.current;
-      dataConnRef.current = conn;
-      if (previous && previous !== conn) previous.close();
-
-      conn.on("open", () => {
-        if (!active || dataConnRef.current !== conn) return;
-        clearTransitionTimer();
-        setDataConnection(conn);
-        setStatus("connected");
-        setError(null);
-      });
-
-      conn.on("close", () => {
-        if (!active || dataConnRef.current !== conn) return;
-        dataConnRef.current = null;
-        setDataConnection(null);
-        recoverRoom();
-      });
-
-      conn.on("error", () => {
-        if (!active || dataConnRef.current !== conn) return;
-        recoverRoom();
-      });
+    const broadcastRoster = (peer: Peer) => {
+      if (role !== "owner" || !peer.open) return;
+      const peers = [peer.id, ...mesh.peers()].slice(0, MAX_PARTICIPANTS);
+      for (const connection of dataConnections.values()) {
+        if (connection.open) {
+          connection.send({ __watchTogether: "roster", peers } satisfies MeshControl);
+        }
+      }
     };
 
     const setupCall = (call: MediaConnection) => {
-      const previous = callRef.current;
-      callRef.current = call;
+      const previous = calls.get(call.peer);
+      calls.set(call.peer, call);
       if (previous && previous !== call) previous.close();
 
-      call.on("stream", (stream) => {
-        if (active && callRef.current === call) setRemoteStream(stream);
+      call.on("stream", stream => {
+        if (!active || calls.get(call.peer) !== call) return;
+        streams.set(call.peer, stream);
+        publishStreams();
       });
-
       call.on("close", () => {
-        if (!active || callRef.current !== call) return;
-        callRef.current = null;
-        setRemoteStream(null);
-        recoverRoom();
+        if (!active || calls.get(call.peer) !== call) return;
+        calls.delete(call.peer);
+        streams.delete(call.peer);
+        publishStreams();
       });
-
       call.on("error", () => {
-        if (active && callRef.current === call) recoverRoom();
+        if (calls.get(call.peer) === call) {
+          calls.delete(call.peer);
+          streams.delete(call.peer);
+          publishStreams();
+        }
       });
     };
+
+    const callPeer = (peer: Peer, targetId: string) => {
+      if (calls.has(targetId) || localStream.getTracks().length === 0) return;
+      setupCall(peer.call(targetId, localStream));
+    };
+
+    const dialMeshPeer = (peer: Peer, targetId: string) => {
+      if (
+        !active ||
+        targetId === peer.id ||
+        mesh.has(targetId) ||
+        dataConnections.has(targetId)
+      )
+        return;
+      setupDataConnection(
+        peer,
+        peer.connect(targetId, {
+          reliable: true,
+          metadata: { canSendMedia: localStream.getTracks().length > 0 },
+        }),
+      );
+      callPeer(peer, targetId);
+    };
+
+    const handleRoster = (peer: Peer, peers: string[]) => {
+      const members = peers.slice(0, MAX_PARTICIPANTS);
+      for (const targetId of members) {
+        if (targetId === peer.id || targetId === roomId) continue;
+        // Exactly one side initiates each non-owner mesh edge.
+        if (peer.id.localeCompare(targetId) > 0) dialMeshPeer(peer, targetId);
+      }
+    };
+
+    function setupDataConnection(peer: Peer, connection: DataConnection) {
+      const existing = dataConnections.get(connection.peer);
+      if (existing && existing !== connection) {
+        connection.close();
+        return;
+      }
+      dataConnections.set(connection.peer, connection);
+
+      connection.on("open", () => {
+        if (!active || dataConnections.get(connection.peer) !== connection) return;
+
+        if (
+          role === "owner" &&
+          !mesh.has(connection.peer) &&
+          mesh.peers().length >= MAX_PARTICIPANTS - 1
+        ) {
+          connection.send({ __watchTogether: "room-full" } satisfies MeshControl);
+          connection.close();
+          return;
+        }
+
+        mesh.add(connection);
+        clearTransition();
+        publishConnectionState();
+        if (role === "owner") broadcastRoster(peer);
+
+        const remoteCanSendMedia =
+          (connection.metadata as { canSendMedia?: boolean } | undefined)
+            ?.canSendMedia ?? true;
+        if (!remoteCanSendMedia) callPeer(peer, connection.peer);
+      });
+
+      connection.on("data", raw => {
+        if (!active || dataConnections.get(connection.peer) !== connection) return;
+        if (isMeshControl(raw)) {
+          if (raw.__watchTogether === "roster") handleRoster(peer, raw.peers);
+          if (raw.__watchTogether === "room-full") {
+            roomFull = true;
+            setError("This room is full (maximum 4 people).");
+            setStatus("error");
+          }
+          return;
+        }
+        mesh.emit(identifyPeerMessage(raw, connection.peer, peer.id));
+      });
+
+      const remove = () => {
+        if (!active || dataConnections.get(connection.peer) !== connection) return;
+        dataConnections.delete(connection.peer);
+        mesh.remove(connection.peer, connection);
+        const call = calls.get(connection.peer);
+        calls.delete(connection.peer);
+        call?.close();
+        streams.delete(connection.peer);
+        publishStreams();
+        if (roomFull) return;
+        publishConnectionState();
+        if (role === "owner") broadcastRoster(peer);
+        else if (connection.peer === roomId) recoverRoom();
+      };
+      connection.on("close", remove);
+      connection.on("error", remove);
+    }
 
     const dialOwner = (peer: Peer) => {
       if (!active || peerRef.current !== peer || !peer.open) return;
       setStatus("connecting");
-      const canSendMedia = localStream.getTracks().length > 0;
-      setupDataConnection(
-        peer.connect(roomId, {
-          reliable: true,
-          metadata: { canSendMedia },
-        }),
-      );
-      // An empty-stream joiner must not create the offer: an offer without
-      // media sections cannot receive tracks. The owner calls it instead.
-      if (canSendMedia) setupCall(peer.call(roomId, localStream));
+      dialMeshPeer(peer, roomId);
     };
 
     const createPeer = (nextRole: RoomRole) => {
       if (!active) return;
-
-      clearTransitionTimer();
+      clearTransition();
       role = nextRole;
-      clearConnections();
-
-      const previous = peerRef.current;
-      peerRef.current = null;
-      previous?.destroy();
+      clearMesh();
+      peerRef.current?.destroy();
 
       const peer =
-        nextRole === "owner"
-          ? new Peer(roomId, peerOptions)
-          : new Peer(peerOptions);
+        nextRole === "owner" ? new Peer(roomId, peerOptions) : new Peer(peerOptions);
       peerRef.current = peer;
       setStatus("connecting");
 
-      if (nextRole === "owner") {
-        peer.on("connection", (conn) => {
-          setupDataConnection(conn);
-          const remoteCanSendMedia =
-            (conn.metadata as { canSendMedia?: boolean } | undefined)
-              ?.canSendMedia ?? true;
-          if (!remoteCanSendMedia && localStream.getTracks().length > 0) {
-            setupCall(peer.call(conn.peer, localStream));
-          }
-        });
-      }
-      // Either role may receive the media call. In particular, an owner with
-      // media calls a receive-only joiner after inspecting its data metadata.
-      peer.on("call", (call) => {
+      peer.on("connection", connection => setupDataConnection(peer, connection));
+      peer.on("call", call => {
+        // The owner rejects unsolicited fifth-member media calls.
+        if (
+          role === "owner" &&
+          !dataConnections.has(call.peer) &&
+          mesh.peers().length >= MAX_PARTICIPANTS - 1
+        ) {
+          call.close();
+          return;
+        }
         call.answer(localStream);
         setupCall(call);
       });
@@ -226,52 +392,34 @@ export function usePeer({
         if (signalingTimer) clearTimeout(signalingTimer);
         signalingTimer = setTimeout(() => {
           signalingTimer = null;
-          if (
-            active &&
-            peerRef.current === peer &&
-            !peer.destroyed &&
-            peer.disconnected
-          ) {
+          if (active && peerRef.current === peer && !peer.destroyed && peer.disconnected) {
             peer.reconnect();
           }
         }, 1_000);
       });
 
-      peer.on("error", (peerError) => {
+      peer.on("error", peerError => {
         if (!active || peerRef.current !== peer) return;
-
         if (peerError.type === "unavailable-id" && role === "owner") {
-          // Another surviving participant owns the room, so join it.
-          if (transitionTimer) return;
-          setError(null);
-          transitionTimer = setTimeout(() => createPeer("joiner"), 300);
+          if (!transitionTimer) {
+            transitionTimer = setTimeout(() => createPeer("joiner"), 300);
+          }
           return;
         }
-
         if (peerError.type === "peer-unavailable" && role === "joiner") {
-          // Nobody currently owns the room. Claim it so future clients can
-          // reconnect to this participant.
-          if (transitionTimer) return;
-          setError("Restoring the session…");
-          transitionTimer = setTimeout(() => createPeer("owner"), 500);
+          if (!transitionTimer) {
+            setError("Restoring the session…");
+            transitionTimer = setTimeout(() => createPeer("owner"), 500);
+          }
           return;
         }
-
         setError(`Connection error: ${peerError.message}`);
         setStatus("error");
       });
     };
 
     function recoverRoom() {
-      if (!active || transitionTimer) return;
-
-      if (role === "owner") {
-        // The room address is still ours; wait for the other participant.
-        setStatus("waiting");
-        return;
-      }
-
-      // A joiner left alone becomes the new owner of the stable room address.
+      if (!active || role === "owner" || transitionTimer) return;
       setStatus("connecting");
       setError("Restoring the session…");
       transitionTimer = setTimeout(() => createPeer("owner"), 500);
@@ -281,13 +429,13 @@ export function usePeer({
 
     return () => {
       active = false;
-      clearTransitionTimer();
+      clearTransition();
       if (signalingTimer) clearTimeout(signalingTimer);
-      clearConnections();
+      clearMesh();
       peerRef.current?.destroy();
       peerRef.current = null;
     };
   }, [localStream, roomCode, isHost]);
 
-  return { remoteStream, dataConnection, status, error };
+  return { remoteStreams, dataConnection, participantCount, status, error };
 }

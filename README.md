@@ -1,6 +1,6 @@
 # watchtogether
 
-A real-time two-person video call app with a shared YouTube player and collaborative whiteboard — no login, no server, no install.
+A real-time peer-to-peer room for up to four people, with video chat, shared media widgets, and a collaborative whiteboard — no login or install.
 
 Built with React + TypeScript + Vite. Peer connections are handled entirely in the browser via WebRTC (PeerJS). The only external service used is PeerJS Cloud for signaling.
 
@@ -8,8 +8,8 @@ Built with React + TypeScript + Vite. Peer connections are handled entirely in t
 
 ## Features
 
-- **Video call** — camera + microphone, two participants
-- **Synchronized YouTube** — paste a URL or video ID; play, pause, and seek stay in lock-step for both viewers
+- **Video call** — camera + microphone for up to four participants, with data-only fallback when media is unavailable
+- **Synchronized YouTube** — paste a URL or video ID; play, pause, and seek stay in lock-step for everyone
 - **Collaborative whiteboard** — draw together in real time on the shared canvas background; pen, eraser, 8 colours, 3 brush sizes, clear
 - **Draggable + resizable panels** — video feeds and YouTube widget can be freely repositioned and resized; layout syncs between peers
 - **Resolution-independent** — panel positions and whiteboard strokes are all normalised to viewport fractions, so everything lands correctly regardless of each peer's screen size or DPR
@@ -23,15 +23,14 @@ Built with React + TypeScript + Vite. Peer connections are handled entirely in t
 ### Connection model
 
 ```
-Host browser  ──PeerJS signaling──  Guest browser
-      │                                    │
-      └──────── WebRTC data channel ───────┘
-      └──────── WebRTC media stream ───────┘
+          Host
+        ╱  │  ╲
+ Guest ─ Guest ─ Guest
 ```
 
 - The **host** generates a room code word, registers as a PeerJS peer with that ID (lowercased), and waits.
-- The **guest** visits the shared URL (`?room=WORD`), connects to that peer ID via PeerJS, and opens a media call.
-- Once connected, all further communication is direct peer-to-peer: no relay server, no backend.
+- Guests visit the shared URL (`?room=WORD`). The host distributes the current roster and the browsers form a full WebRTC mesh, capped at four people.
+- Once connected, application data and media travel directly between browsers. PeerJS Cloud is used for signaling; a configured TURN service may relay WebRTC traffic when a direct route is unavailable.
 
 ### Data channel messages
 
