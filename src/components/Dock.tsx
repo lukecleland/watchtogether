@@ -35,7 +35,7 @@ import { useEffect, useRef, useState } from "react";
 
 export interface DockEntry {
   id: string;
-  type: "local" | "remote" | "youtube" | "audio" | "position" | "note";
+  type: "local" | "remote" | "youtube" | "audio" | "browser" | "position" | "note";
   label: string;
   /** True when the label is a user-set name rather than a derived one. */
   renamed?: boolean;
@@ -73,6 +73,20 @@ function DockIcon({ type }: { type: DockEntry["type"] }) {
         fill="currentColor"
       >
         <path d="M5 3h14a2 2 0 012 2v9l-7 7H5a2 2 0 01-2-2V5a2 2 0 012-2zm9 17.5V15a1 1 0 011-1h5.5L14 20.5z" />
+      </svg>
+    );
+  }
+  if (type === "browser") {
+    return (
+      <svg
+        className="w-4 h-4 text-sky-400 shrink-0"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth={2}
+      >
+        <rect x="3" y="4" width="18" height="16" rx="2" />
+        <path d="M3 9h18M7 6.5h.01M10 6.5h.01" strokeLinecap="round" />
       </svg>
     );
   }

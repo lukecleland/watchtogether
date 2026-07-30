@@ -112,6 +112,25 @@ npm run build
 
 The output in `dist/` is a fully static site — drop it on Netlify, Vercel, GitHub Pages, or any static host.
 
+### Reliable mobile-to-mobile connections
+
+The PeerJS cloud service handles signaling only. For two phones on cellular or
+restrictive Wi-Fi, configure a TURN relay so WebRTC has a route when a direct
+STUN connection is blocked:
+
+```bash
+cp .env.example .env.local
+```
+
+Set `VITE_TURN_URLS`, `VITE_TURN_USERNAME`, and `VITE_TURN_CREDENTIAL` using
+values from your TURN provider, then rebuild/redeploy. Prefer a provider that
+supplies both UDP TURN and TLS/TCP TURN on port 443. The app tries direct P2P
+first and uses the relay only when necessary.
+
+Because Vite embeds `VITE_*` values into the browser bundle, use short-lived
+TURN credentials in production where your provider supports them. Do not put a
+TURN provider's account/API secret in these variables.
+
 ---
 
 ## Tech stack

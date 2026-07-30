@@ -53,6 +53,8 @@ export type SyncMessage =
 	  }
 	| { type: 'draw-clear' }
 	| { type: 'spawn-youtube'; id: string; videoId?: string; state: PanelState }
+	| { type: 'spawn-browser'; id: string; url?: string; state: PanelState }
+	| { type: 'browser-load'; id: string; url: string }
 	| {
 			type: 'spawn-audio';
 			id: string;

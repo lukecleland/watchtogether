@@ -2,7 +2,7 @@
 export type PanelId = "local" | "remote";
 
 /** The type of a dynamically-spawned panel. */
-export type DynamicPanelType = "youtube" | "audio" | "note";
+export type DynamicPanelType = "youtube" | "audio" | "browser" | "note";
 
 /** Which face a sticky note is currently showing. */
 export type NoteKind = "text" | "chord" | "tab";
@@ -69,4 +69,5 @@ export interface DynamicPanel {
   initialFile?: File;
   /** Live contents for a note panel — updated in place as either peer edits. */
   note?: NoteContent;
+  initialUrl?: string;
 }
