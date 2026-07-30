@@ -52,6 +52,17 @@ export type SyncMessage =
 			width: number;
 	  }
 	| { type: 'draw-clear' }
+	/** A piece of text placed on the canvas. Coordinates are viewport fractions
+	 *  and size is a fraction of min(viewportW, viewportH), like stroke width. */
+	| {
+			type: 'draw-text';
+			x: number;
+			y: number;
+			text: string;
+			color: string;
+			size: number;
+			font: string;
+	  }
 	| { type: 'spawn-youtube'; id: string; videoId?: string; state: PanelState }
 	| {
 			type: 'spawn-audio';

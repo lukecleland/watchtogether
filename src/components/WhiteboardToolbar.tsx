@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { METALS, metalFor, type Nib } from "../utils/brush";
+import { FONT_STACKS, METALS, metalFor, TEXT_SIZES, type Nib, type TextFont } from "../utils/brush";
 
 /**
  * WhiteboardToolbar — a floating tool island with a contextual properties panel.
@@ -30,17 +30,30 @@ import { METALS, metalFor, type Nib } from "../utils/brush";
  * presentation change only, so Session.tsx is untouched.
  */
 
+type Tool = "pen" | "eraser" | "text";
+
 interface WhiteboardToolbarProps {
-  tool: "pen" | "eraser";
+  tool: Tool;
   color: string;
   width: number;
   nib: Nib;
-  onToolChange: (t: "pen" | "eraser") => void;
+  font: TextFont;
+  textSize: number;
+  onToolChange: (t: Tool) => void;
   onColorChange: (c: string) => void;
   onWidthChange: (w: number) => void;
   onNibChange: (n: Nib) => void;
+  onFontChange: (f: TextFont) => void;
+  onTextSizeChange: (s: number) => void;
   onClear: () => void;
 }
+
+const FONTS: { id: TextFont; label: string }[] = [
+  { id: "sans", label: "Sans" },
+  { id: "serif", label: "Serif" },
+  { id: "mono", label: "Mono" },
+  { id: "hand", label: "Hand" }
+];
 
 const COLORS = [
   "#ffffff",
@@ -184,10 +197,14 @@ export function WhiteboardToolbar({
   color,
   width,
   nib,
+  font,
+  textSize,
   onToolChange,
   onColorChange,
   onWidthChange,
   onNibChange,
+  onFontChange,
+  onTextSizeChange,
   onClear
 }: WhiteboardToolbarProps) {
   const [panelOpen, setPanelOpen] = useState(false);
@@ -206,7 +223,7 @@ export function WhiteboardToolbar({
     return () => window.removeEventListener("pointerdown", onDown);
   }, [panelOpen]);
 
-  const selectTool = (t: "pen" | "eraser") => {
+  const selectTool = (t: Tool) => {
     // Re-tapping the active tool toggles its options rather than doing nothing
     if (t === tool) setPanelOpen(o => !o);
     else {
@@ -215,17 +232,17 @@ export function WhiteboardToolbar({
     }
   };
 
-  const toolButton = (
-    t: "pen" | "eraser",
-    label: string,
-    path: string
-  ) => (
+  // A tool button carries its own state rather than delegating it to a second
+  // control: the pen shows the colour it will draw with, and the active tool
+  // shows a chevron so "tap again for options" is visible rather than folklore.
+  const toolButton = (t: Tool, label: string, path: string, swatch = false) => (
     <button
       onClick={() => selectTool(t)}
-      title={label}
+      title={tool === t ? `${label} — tap for options` : label}
       aria-label={label}
       aria-pressed={tool === t}
-      className={`w-9 h-9 flex items-center justify-center rounded-xl transition-colors ${
+      aria-expanded={tool === t ? panelOpen : undefined}
+      className={`relative w-9 h-9 flex items-center justify-center rounded-xl transition-colors ${
         tool === t
           ? "bg-violet-600 text-white"
           : "text-zinc-400 hover:text-zinc-100 hover:bg-zinc-700"
@@ -234,6 +251,29 @@ export function WhiteboardToolbar({
       <svg className="w-[18px] h-[18px]" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
         <path strokeLinecap="round" strokeLinejoin="round" d={path} />
       </svg>
+
+      {swatch && (
+        <span
+          aria-hidden="true"
+          className="absolute bottom-1 left-1/2 -translate-x-1/2 w-4 h-[3px] rounded-full border border-black/30"
+          style={{
+            background: metalFor(color)
+              ? `linear-gradient(90deg, ${metalFor(color)!.join(", ")})`
+              : color
+          }}
+        />
+      )}
+
+      {tool === t && (
+        <svg
+          aria-hidden="true"
+          className="absolute -bottom-0.5 right-0.5 w-2.5 h-2.5 opacity-80"
+          viewBox="0 0 24 24"
+          fill="currentColor"
+        >
+          <path d="M7 10l5 5 5-5z" />
+        </svg>
+      )}
     </button>
   );
 
@@ -248,7 +288,8 @@ export function WhiteboardToolbar({
         {toolButton(
           "pen",
           "Pen",
-          "M15.232 5.232l3.536 3.536M9 11l6.586-6.586a2 2 0 112.828 2.828L11.828 13.828a4 4 0 01-1.414.95l-3.31 1.103 1.104-3.31A4 4 0 019 11z"
+          "M15.232 5.232l3.536 3.536M9 11l6.586-6.586a2 2 0 112.828 2.828L11.828 13.828a4 4 0 01-1.414.95l-3.31 1.103 1.104-3.31A4 4 0 019 11z",
+          true
         )}
         {toolButton(
           "eraser",
@@ -256,34 +297,11 @@ export function WhiteboardToolbar({
           "M20.707 5.826l-2.534-2.533a1 1 0 00-1.414 0l-10 10a1 1 0 000 1.414l2.534 2.534 1.414-1.415-1.829-1.828 8.586-8.585 1.83 1.83-1.415 1.414 1.415 1.414 2.828-2.828a1 1 0 000-1.414zM4 20h7"
         )}
 
-        <div className="w-px h-6 bg-zinc-700 mx-0.5" />
-
-        {/* Current colour — doubles as the properties toggle */}
-        <button
-          onClick={() => setPanelOpen(o => !o)}
-          title="Colour and size"
-          aria-label="Colour and size"
-          aria-expanded={panelOpen}
-          className="w-9 h-9 flex items-center justify-center rounded-xl hover:bg-zinc-700 transition-colors"
-        >
-          <span
-            className="w-5 h-5 rounded-lg border border-zinc-500"
-            style={{
-              background:
-                tool === "eraser"
-                  ? "transparent"
-                  : color.startsWith("metal:")
-                    ? `linear-gradient(135deg, ${METALS[color.slice(6)]?.join(", ")})`
-                    : color
-            }}
-          >
-            {tool === "eraser" && (
-              <svg className="w-full h-full text-zinc-400" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
-                <path strokeLinecap="round" d="M5 19L19 5" />
-              </svg>
-            )}
-          </span>
-        </button>
+        {toolButton(
+          "text",
+          "Text tool",
+          "M4 7V5h16v2M9 5v14m-2 0h4"
+        )}
 
         <div className="w-px h-6 bg-zinc-700 mx-0.5" />
 
@@ -310,6 +328,28 @@ export function WhiteboardToolbar({
           style={{ position: "fixed", zIndex: 999, top: PANEL_OFFSET }}
           className="left-3 sm:left-4 w-[13.5rem] bg-zinc-900/95 backdrop-blur border border-zinc-700 rounded-2xl p-3 shadow-xl select-none"
         >
+          {tool === "text" && (
+            <>
+              <p className="text-[11px] uppercase tracking-wide text-zinc-500 mb-2">Font</p>
+              <div className="grid grid-cols-2 gap-1 mb-3.5">
+                {FONTS.map(f => (
+                  <button
+                    key={f.id}
+                    onClick={() => onFontChange(f.id)}
+                    aria-label={f.label}
+                    aria-pressed={font === f.id}
+                    style={{ fontFamily: FONT_STACKS[f.id] }}
+                    className={`px-2 py-1.5 rounded-lg text-sm text-zinc-200 transition-colors ${
+                      font === f.id ? "bg-zinc-700" : "hover:bg-zinc-800"
+                    }`}
+                  >
+                    {f.label}
+                  </button>
+                ))}
+              </div>
+            </>
+          )}
+
           {tool === "pen" && (
             <>
               <p className="text-[11px] uppercase tracking-wide text-zinc-500 mb-2">Nib</p>
@@ -330,14 +370,19 @@ export function WhiteboardToolbar({
                   </button>
                 ))}
               </div>
+            </>
+          )}
 
+          {/* Colour is shared by the pen and the text tool; the eraser has none */}
+          {tool !== "eraser" && (
+            <>
               <p className="text-[11px] uppercase tracking-wide text-zinc-500 mb-2">Colour</p>
               <div
                 className={`grid gap-1.5 mb-2 ${
-                  nib === "highlighter" ? "grid-cols-6" : "grid-cols-8"
+                  tool === "pen" && nib === "highlighter" ? "grid-cols-6" : "grid-cols-8"
                 }`}
               >
-                {(nib === "highlighter" ? HIGHLIGHTER_COLORS : COLORS).map(c => (
+                {(tool === "pen" && nib === "highlighter" ? HIGHLIGHTER_COLORS : COLORS).map(c => (
                   <button
                     key={c}
                     onClick={() => onColorChange(c)}
@@ -354,7 +399,7 @@ export function WhiteboardToolbar({
 
               {/* Metallics are gradients, so they can't be a flat swatch —
                   and they're pointless behind a translucent highlighter. */}
-              {nib !== "highlighter" && (
+              {!(tool === "pen" && nib === "highlighter") && (
                 <div className="grid grid-cols-4 gap-1.5 mb-2">
                   {Object.entries(METALS).map(([name, [a, b, c]]) => (
                     <button
@@ -388,10 +433,30 @@ export function WhiteboardToolbar({
           )}
 
           <p className="text-[11px] uppercase tracking-wide text-zinc-500 mb-2">
-            {tool === "eraser" ? "Eraser size" : "Size"}
+            {tool === "eraser" ? "Eraser size" : tool === "text" ? "Text size" : "Size"}
           </p>
           <div className="flex items-center gap-1.5">
-            {SIZES.map(s => (
+            {tool === "text"
+              ? TEXT_SIZES.map(s => (
+                  <button
+                    key={s.value}
+                    onClick={() => onTextSizeChange(s.value)}
+                    title={`Text size ${s.label}`}
+                    aria-label={`Text size ${s.label}`}
+                    aria-pressed={textSize === s.value}
+                    className={`flex-1 h-9 flex items-center justify-center rounded-xl transition-colors ${
+                      textSize === s.value ? "bg-zinc-700" : "hover:bg-zinc-800"
+                    }`}
+                  >
+                    <span
+                      className="leading-none text-zinc-200"
+                      style={{ fontSize: Math.round(s.value / 2.6), fontFamily: FONT_STACKS[font] }}
+                    >
+                      Aa
+                    </span>
+                  </button>
+                ))
+              : SIZES.map(s => (
               <button
                 key={s.value}
                 onClick={() => onWidthChange(s.value)}
@@ -411,7 +476,7 @@ export function WhiteboardToolbar({
                   }}
                 />
               </button>
-            ))}
+                ))}
           </div>
         </div>
       )}

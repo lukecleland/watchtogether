@@ -34,8 +34,8 @@ import { YoutubeWidget } from '../components/YoutubeWidget';
 import { AudioPlayer } from '../components/AudioPlayer';
 import { StickyNote } from '../components/StickyNote';
 import { DraggablePanel } from '../components/DraggablePanel';
-import { Whiteboard, type WhiteboardHandle, type WhiteboardStroke } from '../components/Whiteboard';
-import type { Nib } from '../utils/brush';
+import { Whiteboard, type WhiteboardHandle, type WhiteboardStroke, type WhiteboardText } from '../components/Whiteboard';
+import type { Nib, TextFont } from '../utils/brush';
 import { WhiteboardToolbar } from '../components/WhiteboardToolbar';
 import { Dock, type DockEntry } from '../components/Dock';
 import { usePeer } from '../hooks/usePeer';
@@ -193,10 +193,12 @@ export function Session({ roomCode, isHost }: SessionProps) {
 
 	// Whiteboard
 	const whiteboardRef = useRef<WhiteboardHandle>(null);
-	const [wbTool, setWbTool] = useState<'pen' | 'eraser'>('pen');
+	const [wbTool, setWbTool] = useState<'pen' | 'eraser' | 'text'>('pen');
 	const [wbColor, setWbColor] = useState('#ffffff');
 	const [wbWidth, setWbWidth] = useState(3);
 	const [wbNib, setWbNib] = useState<Nib>('ballpoint');
+	const [wbFont, setWbFont] = useState<TextFont>('sans');
+	const [wbTextSize, setWbTextSize] = useState(30);
 	// The highlighter keeps its own colour. Sharing the pen's would mean
 	// highlighting in white, which does nothing on a dark canvas.
 	const [wbHighlightColor, setWbHighlightColor] = useState('#facc15');
@@ -348,6 +350,8 @@ export function Session({ roomCode, isHost }: SessionProps) {
 			});
 		} else if (msg.type === 'draw') {
 			whiteboardRef.current?.drawStroke(msg);
+		} else if (msg.type === 'draw-text') {
+			whiteboardRef.current?.drawText({ ...msg, kind: 'text', font: msg.font as TextFont });
 		} else if (msg.type === 'draw-clear') {
 			whiteboardRef.current?.clearCanvas();
 		}
@@ -370,6 +374,13 @@ export function Session({ roomCode, isHost }: SessionProps) {
 	const handleWbStroke = useCallback(
 		(stroke: WhiteboardStroke) => {
 			sendSync({ type: 'draw', ...stroke });
+		},
+		[sendSync]
+	);
+
+	const handleWbText = useCallback(
+		(item: WhiteboardText) => {
+			sendSync({ type: 'draw-text', x: item.x, y: item.y, text: item.text, color: item.color, size: item.size, font: item.font });
 		},
 		[sendSync]
 	);
@@ -1106,7 +1117,18 @@ export function Session({ roomCode, isHost }: SessionProps) {
 			)}
 
 			{/* Whiteboard canvas — sits below all panels, transparent so grid shows through */}
-			<Whiteboard ref={whiteboardRef} tool={wbTool} color={activeColor} width={wbWidth} nib={wbNib} onStroke={handleWbStroke} canvasTransform={canvas} />
+			<Whiteboard
+				ref={whiteboardRef}
+				tool={wbTool}
+				color={activeColor}
+				width={wbWidth}
+				nib={wbNib}
+				font={wbFont}
+				textSize={wbTextSize}
+				onStroke={handleWbStroke}
+				onText={handleWbText}
+				canvasTransform={canvas}
+			/>
 
 			{/* Whiteboard toolbar */}
 			<WhiteboardToolbar
@@ -1114,6 +1136,10 @@ export function Session({ roomCode, isHost }: SessionProps) {
 				color={activeColor}
 				width={wbWidth}
 				nib={wbNib}
+				font={wbFont}
+				textSize={wbTextSize}
+				onFontChange={setWbFont}
+				onTextSizeChange={setWbTextSize}
 				onToolChange={setWbTool}
 				onColorChange={setActiveColor}
 				onWidthChange={setWbWidth}
