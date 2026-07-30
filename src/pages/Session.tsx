@@ -87,7 +87,9 @@ function defaultFixedPanels(): Record<PanelId, PanelState> {
 		// On mobile: narrower panels, stacked vertically, extra top offset for notch
 		const videoW = Math.min(vw - 32, 320);
 		const videoH = Math.round((videoW * 9) / 16);
-		const topY = 100; // clear the top bar including typical iOS safe-area inset
+		// Clears the top bar, the typical iOS safe-area inset, and the tool island
+		// that now sits centred beneath the bar
+		const topY = 156;
 		return {
 			local: { x: 16, y: topY, width: videoW, height: videoH, z: 10 },
 			remote: {
@@ -102,7 +104,7 @@ function defaultFixedPanels(): Record<PanelId, PanelState> {
 
 	const videoW = Math.min(420, Math.floor((vw - 80) / 2));
 	const videoH = Math.round((videoW * 9) / 16);
-	const topY = 56; // below the top bar
+	const topY = 112; // below the top bar and the tool island beneath it
 	return {
 		local: { x: videoW + 40, y: topY, width: videoW, height: videoH, z: 10 },
 		remote: { x: 20, y: topY, width: videoW, height: videoH, z: 10 }
