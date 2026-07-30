@@ -19,6 +19,8 @@ export function AudioPlayer({
   docked = false,
   onToggleDock,
   onTrackChange,
+  transferProgress,
+  onFileChosen,
 }: {
   id: string;
   dataConnection: DataConnection | null;
@@ -31,6 +33,14 @@ export function AudioPlayer({
   onToggleDock?: () => void;
   /** Reports the loaded track name so the parent can label the dock chip. */
   onTrackChange?: (name: string) => void;
+  /** 0–1 while a file is still arriving over the data channel. */
+  transferProgress?: number;
+  /**
+   * A file the *local* user picked or dropped onto this panel, so the parent
+   * can stream it to the peer. Deliberately not called for a file that arrived
+   * from the peer, which would bounce it straight back.
+   */
+  onFileChosen?: (file: File) => void;
 }) {
   const audioRef = useRef<HTMLAudioElement>(null);
   const objectUrlRef = useRef<string | null>(null);
@@ -81,6 +91,8 @@ export function AudioPlayer({
   });
   sendSyncRef.current = sendSync;
 
+  const loadedFileRef = useRef<File | null>(null);
+
   const loadFile = useCallback((file: File) => {
     if (!audioRef.current) return;
     // Revoke previous object URL to free memory
@@ -97,16 +109,23 @@ export function AudioPlayer({
     setMinimised(false);
   }, [onTrackChange]);
 
-  // Auto-load if created with a file (e.g. from a background drop)
+  // Load the file whenever one turns up. It may be present at mount (a local
+  // drop) or arrive later, once a chunked transfer from the peer completes.
   useEffect(() => {
-    if (initialFile) loadFile(initialFile);
+    if (initialFile && loadedFileRef.current !== initialFile) {
+      loadedFileRef.current = initialFile;
+      loadFile(initialFile);
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [initialFile]);
 
   // ── File input ────────────────────────────────────────────────────────
   const handleFileInput = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    if (file) loadFile(file);
+    if (!file) return;
+    loadedFileRef.current = file;
+    loadFile(file);
+    onFileChosen?.(file);
   };
 
   // ── Drag and drop ─────────────────────────────────────────────────────
@@ -129,7 +148,9 @@ export function AudioPlayer({
     const file = e.dataTransfer.files[0];
     if (!file) return;
     if (!file.type.match(/audio\/(mpeg|wav|ogg|flac|aac|mp4)/)) return;
+    loadedFileRef.current = file;
     loadFile(file);
+    onFileChosen?.(file);
   };
 
   // ── Playback controls ─────────────────────────────────────────────────
@@ -303,7 +324,21 @@ export function AudioPlayer({
 
       {!minimised && (
         <div className="flex flex-col flex-1 gap-2 px-3 py-2 min-w-0">
-          {!fileName ? (
+          {transferProgress !== undefined && !fileName ? (
+            /* ── Arriving over the data channel ── */
+            <div className="flex flex-col items-center justify-center flex-1 gap-2 px-3">
+              <p className="text-xs text-zinc-400">Receiving track…</p>
+              <div className="w-full h-1.5 bg-zinc-700 rounded-full overflow-hidden">
+                <div
+                  className="h-full bg-violet-500 transition-[width] duration-150"
+                  style={{ width: `${Math.round(transferProgress * 100)}%` }}
+                />
+              </div>
+              <p className="text-xs text-zinc-500 tabular-nums">
+                {Math.round(transferProgress * 100)}%
+              </p>
+            </div>
+          ) : !fileName ? (
             /* ── Drop zone ── */
             <label
               className={`flex flex-col items-center justify-center flex-1 rounded-xl border-2 border-dashed transition-colors cursor-pointer select-none ${

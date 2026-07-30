@@ -95,7 +95,20 @@ export type SyncMessage =
 	/** "Look at this one, now." Pulses the named bookmark on the peer's dock,
 	 *  and re-adds it if they had dismissed it — a ping is an explicit nudge,
 	 *  so silently doing nothing would be worse than the small intrusion. */
-	| { type: 'dock-ping'; id: string };
+	| { type: 'dock-ping'; id: string }
+	/** Announces a chunked file transfer and the panel it belongs to. */
+	| {
+			type: 'file-begin';
+			transferId: string;
+			panelId: string;
+			fileName: string;
+			mimeType: string;
+			size: number;
+			chunks: number;
+	  }
+	/** One slice of a file, base64, placed by index rather than appended. */
+	| { type: 'file-chunk'; transferId: string; index: number; data: string }
+	| { type: 'file-abort'; transferId: string };
 
 interface UseYouTubeSyncOptions {
 	dataConnection: DataConnection | null;

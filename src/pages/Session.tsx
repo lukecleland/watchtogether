@@ -43,6 +43,7 @@ import { usePeer } from '../hooks/usePeer';
 import { useYouTubeSync, type SyncMessage } from '../hooks/useYouTubeSync';
 import type { PanelId, PanelState, DynamicPanel, NoteContent } from '../types/panels';
 import { defaultNoteContent } from '../types/panels';
+import { TransferReceiver, base64ToChunk, chunkCount, sendFileInChunks } from '../utils/fileTransfer';
 
 interface SessionProps {
 	roomCode: string;
@@ -186,6 +187,17 @@ export function Session({ roomCode, isHost }: SessionProps) {
 	// and renaming are shared with the peer (see `dock-tag` / `dock-rename`);
 	// dismissing is local, so neither person can clear the other's bar.
 	const [dockedIds, setDockedIds] = useState<string[]>([]);
+	// ── File transfer ────────────────────────────────────────────────────────
+	// Files stream in chunks rather than arriving whole, so a panel can appear
+	// immediately and show how far along its contents are.
+	const receiverRef = useRef(new TransferReceiver());
+	// The live connection, so a transfer can watch the channel's send buffer
+	const dataConnectionRef = useRef<unknown>(null);
+	const [transferProgress, setTransferProgress] = useState<Record<string, number>>({});
+	// transferId -> panelId, so an in-flight transfer can be attributed
+	const transferPanelRef = useRef<Record<string, string>>({});
+	const pendingPanelForTransfer = (transferId: string) => transferPanelRef.current[transferId];
+
 	// Bookmarks the peer tagged that we haven't acknowledged yet — these pulse.
 	const [pulsingIds, setPulsingIds] = useState<string[]>([]);
 	// Pulse timers, so they can be cleared on acknowledge / unmount
@@ -219,6 +231,7 @@ export function Session({ roomCode, isHost }: SessionProps) {
 		isHost,
 		localStream
 	});
+	dataConnectionRef.current = dataConnection;
 
 	// Stop a chip pulsing — it's been seen
 	const acknowledgePulse = useCallback((id: string) => {
@@ -306,12 +319,11 @@ export function Session({ roomCode, isHost }: SessionProps) {
 				}
 			]);
 		} else if (msg.type === 'spawn-audio') {
+			// Older builds inlined the whole file here; newer ones stream it
+			// separately, so the panel arrives empty and fills in.
 			let initialFile: File | undefined;
 			if (msg.dataB64 && msg.fileName && msg.mimeType) {
-				const binaryStr = atob(msg.dataB64);
-				const bytes = new Uint8Array(binaryStr.length);
-				for (let i = 0; i < binaryStr.length; i++) bytes[i] = binaryStr.charCodeAt(i);
-				initialFile = new File([bytes], msg.fileName, { type: msg.mimeType });
+				initialFile = new File([base64ToChunk(msg.dataB64)], msg.fileName, { type: msg.mimeType });
 			}
 			setDynamicPanels(prev => [
 				...prev,
@@ -374,6 +386,31 @@ export function Session({ roomCode, isHost }: SessionProps) {
 				}
 				return { ...prev, [id]: msg.label };
 			});
+		} else if (msg.type === 'file-begin') {
+			transferPanelRef.current[msg.transferId] = msg.panelId;
+			receiverRef.current.begin(msg);
+			setTransferProgress(prev => ({ ...prev, [msg.panelId]: 0 }));
+		} else if (msg.type === 'file-chunk') {
+			const done = receiverRef.current.accept(msg.transferId, msg.index, msg.data);
+			if (done) {
+				delete transferPanelRef.current[msg.transferId];
+				setDynamicPanels(prev =>
+					prev.map(p => (p.id === done.meta.panelId ? { ...p, initialFile: done.file } : p))
+				);
+				setTransferProgress(prev => {
+					const next = { ...prev };
+					delete next[done.meta.panelId];
+					return next;
+				});
+			} else {
+				const panelId = pendingPanelForTransfer(msg.transferId);
+				if (panelId) {
+					const p = receiverRef.current.progressFor(panelId);
+					if (p !== null) setTransferProgress(prev => ({ ...prev, [panelId]: p }));
+				}
+			}
+		} else if (msg.type === 'file-abort') {
+			receiverRef.current.abort(msg.transferId);
 		} else if (msg.type === 'draw') {
 			whiteboardRef.current?.drawStroke(msg);
 		} else if (msg.type === 'draw-text') {
@@ -437,6 +474,41 @@ export function Session({ roomCode, isHost }: SessionProps) {
 			setDockedIds(prev => (prev.includes(id) ? prev : [...prev, id]));
 			sendSync({ type: 'position-tag', id, x: tag.x, y: tag.y, w: tag.w, h: tag.h, label: tag.label });
 			sendSync({ type: 'dock-tag', id });
+		},
+		[sendSync]
+	);
+
+	// Stream a file to the peer for an already-spawned panel
+	const sendFileTo = useCallback(
+		(panelId: string, file: File) => {
+			const transferId = crypto.randomUUID();
+			transferPanelRef.current[transferId] = panelId;
+			sendSync({
+				type: 'file-begin',
+				transferId,
+				panelId,
+				fileName: file.name,
+				mimeType: file.type,
+				size: file.size,
+				chunks: chunkCount(file.size)
+			});
+			setTransferProgress(prev => ({ ...prev, [panelId]: 0 }));
+			void sendFileInChunks(
+				file,
+				dataConnectionRef.current,
+				({ index, data }) => sendSync({ type: 'file-chunk', transferId, index, data }),
+				fraction => {
+					setTransferProgress(prev => ({ ...prev, [panelId]: fraction }));
+					if (fraction >= 1) {
+						delete transferPanelRef.current[transferId];
+						setTransferProgress(prev => {
+							const next = { ...prev };
+							delete next[panelId];
+							return next;
+						});
+					}
+				}
+			);
 		},
 		[sendSync]
 	);
@@ -732,20 +804,10 @@ export function Session({ roomCode, isHost }: SessionProps) {
 			} else if (type === 'browser') {
 				sendSync({ type: 'spawn-browser', id, url: extra?.initialUrl, state: normalisePanel(state) });
 			} else if (type === 'audio') {
-				if (extra?.initialFile) {
-					const file = extra.initialFile;
-					const reader = new FileReader();
-					reader.onload = () => {
-						const bytes = new Uint8Array(reader.result as ArrayBuffer);
-						let binary = '';
-						for (let i = 0; i < bytes.byteLength; i++) binary += String.fromCharCode(bytes[i]);
-						sendSync({ type: 'spawn-audio', id, fileName: file.name, mimeType: file.type, dataB64: btoa(binary), state: normalisePanel(state) });
-					};
-					reader.readAsArrayBuffer(file);
-				} else {
-					// Empty audio panel (no file yet)
-					sendSync({ type: 'spawn-audio', id, state: normalisePanel(state) });
-				}
+				// The panel goes over first and the bytes follow, so the other
+				// side sees it appear and fill rather than waiting on silence.
+				sendSync({ type: 'spawn-audio', id, state: normalisePanel(state) });
+				if (extra?.initialFile) sendFileTo(id, extra.initialFile);
 			} else if (type === 'note') {
 				sendSync({ type: 'spawn-note', id, state: normalisePanel(state), note: extra?.note ?? defaultNoteContent() });
 			}
@@ -1404,6 +1466,8 @@ export function Session({ roomCode, isHost }: SessionProps) {
 								docked={dockedIds.includes(panel.id)}
 								onToggleDock={() => toggleDock(panel.id)}
 								onTrackChange={name => setPanelLabels(prev => ({ ...prev, [panel.id]: name }))}
+								transferProgress={transferProgress[panel.id]}
+								onFileChosen={file => sendFileTo(panel.id, file)}
 							/>
 						) : (
 							<BrowserWidget
