@@ -34,10 +34,12 @@ body {
  * The record player's spinning parts — an SVG group holding the platter,
  * strobe dots, vinyl and label, so the whole stack turns as one piece.
  * 1.8s per revolution ≈ 33⅓ RPM, the speed the label claims.
+ *
+ * The rotation origin is set inline on the group (the spindle, in view-box
+ * units) rather than here: `transform-box: fill-box` reads differently in
+ * Chrome and Safari for SVG groups, and Chrome spun the deck off-centre.
  */
 .deck-spin {
-  transform-box: fill-box;
-  transform-origin: center;
   animation: record-spin 1.8s linear infinite;
 }
 
