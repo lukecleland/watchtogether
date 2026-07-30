@@ -223,6 +223,15 @@ export function Session({ roomCode, isHost }: SessionProps) {
 		[acknowledgePulse]
 	);
 
+	// Any z arriving from the peer has to push our own counter up. Without this
+	// the counters drift apart: they raise a panel to 21, we still think the top
+	// is 20, and the next panel we spawn is handed 21 as well — a tie that leaves
+	// it level with or behind theirs, and if it lands over the top of one it
+	// can't be clicked at all.
+	const noteRemoteZ = useCallback((z: number) => {
+		if (Number.isFinite(z) && z > topZRef.current) topZRef.current = z;
+	}, []);
+
 	// Drop any dock chip / cached label belonging to a panel that no longer exists
 	const forgetPanel = useCallback((id: string) => {
 		setDockedIds(prev => (prev.includes(id) ? prev.filter(d => d !== id) : prev));
@@ -243,6 +252,9 @@ export function Session({ roomCode, isHost }: SessionProps) {
 
 	// Panel sync — wired to the same data channel as YouTube sync
 	const handleRemoteSync = useCallback((msg: SyncMessage) => {
+		// Every message that carries panel geometry carries a z with it
+		if ('state' in msg) noteRemoteZ(msg.state.z);
+
 		if (msg.type === 'panel-update') {
 			if (msg.id === 'local' || msg.id === 'remote') {
 				// Swap local ↔ remote so each user's "You" drives the other's "Guest"
@@ -332,7 +344,7 @@ export function Session({ roomCode, isHost }: SessionProps) {
 		} else if (msg.type === 'draw-clear') {
 			whiteboardRef.current?.clearCanvas();
 		}
-	}, [forgetPanel, startPulse]);
+	}, [forgetPanel, startPulse, noteRemoteZ]);
 
 	// We use useYouTubeSync here to route panel-update and whiteboard messages.
 	// YoutubeWidget mounts its own useYouTubeSync instance for YT playback messages.
@@ -383,7 +395,14 @@ export function Session({ roomCode, isHost }: SessionProps) {
 		onSyncUpdate: (next: PanelState) => sendPanelUpdate(id, next),
 		onBringToFront: () => {
 			const nextZ = ++topZRef.current;
+			const panel = dynamicPanels.find(p => p.id === id);
 			setDynamicPanels(prev => prev.map(p => (p.id === id ? { ...p, state: { ...p.state, z: nextZ } } : p)));
+			// Fixed panels already sync their raise. Spawned ones only did so by
+			// accident, via the drag-stop that usually follows a pointer-down —
+			// so raising one by clicking a control inside it stayed local.
+			// The send sits outside the state updater; StrictMode runs updaters
+			// twice, which would send it twice.
+			if (panel) sendPanelUpdate(id, { ...panel.state, z: nextZ });
 		}
 	});
 
