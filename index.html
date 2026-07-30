@@ -7,6 +7,21 @@
       name="viewport"
       content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover"
     />
+
+    <!-- Add to Home Screen. iOS ignores the manifest's icons and reads
+         apple-touch-icon instead, so both are needed. -->
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <meta name="theme-color" content="#18181b" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-title" content="watchtogether" />
+    <!-- Black-translucent lets the canvas run under the status bar, which the
+         existing viewport-fit=cover + safe-area insets already account for. -->
+    <meta
+      name="apple-mobile-web-app-status-bar-style"
+      content="black-translucent"
+    />
+
     <title>watchtogether</title>
   </head>
   <body>
