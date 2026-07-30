@@ -222,15 +222,32 @@ export function AudioPlayer({
   };
 
   // ── Playback controls ─────────────────────────────────────────────────
-  const togglePlay = () => {
+  // ── Transport ─────────────────────────────────────────────────────────
+  // Three separate mechanical buttons rather than one toggle. Exactly one is
+  // latched down at a time, like a cassette deck:
+  //   playing → PLAY · paused mid-track → PAUSE · at the start → STOP
+  const play = () => {
     const audio = audioRef.current;
     if (!audio || !fileName) return;
-    if (audio.paused) {
-      audio.play().catch(() => {});
-    } else {
-      audio.pause();
-    }
+    audio.play().catch(() => {});
   };
+  const pause = () => {
+    audioRef.current?.pause();
+  };
+  const stop = () => {
+    const audio = audioRef.current;
+    if (!audio || !fileName) return;
+    // pause() syncs itself via the pause event; the rewind needs its own send
+    audio.pause();
+    audio.currentTime = 0;
+    setCurrentTime(0);
+    sendSync({ type: "audio-seek", id, time: 0 });
+  };
+  const transport: "play" | "pause" | "stop" = isPlaying
+    ? "play"
+    : currentTime > 0
+      ? "pause"
+      : "stop";
 
   const handleSeek = (e: React.ChangeEvent<HTMLInputElement>) => {
     const audio = audioRef.current;
@@ -598,7 +615,9 @@ export function AudioPlayer({
                       <g
                         style={{
                           transform: `rotate(${
-                            fileName && duration > 0
+                            // Stopped (at 0:00 and not playing) parks the arm
+                            // on its rest; play swings it in to the groove.
+                            fileName && duration > 0 && (isPlaying || currentTime > 0)
                               ? armAngleAt(
                                   R_GROOVE_OUT -
                                     (R_GROOVE_OUT - R_LABEL) * Math.min(1, currentTime / duration),
@@ -640,26 +659,54 @@ export function AudioPlayer({
                     ))}
                   </svg>
 
-                  {/* Play/pause — a real button over the deck, bottom-right */}
-                  <button
-                    onClick={togglePlay}
-                    className={`absolute bottom-[6%] right-[3.5%] flex h-10 w-10 items-center justify-center rounded-full border shadow-lg transition-colors ${
-                      isPlaying
-                        ? "bg-amber-500 border-amber-200 text-stone-900"
-                        : "bg-zinc-800 border-zinc-500 text-zinc-200 hover:bg-zinc-700"
-                    }`}
-                    aria-label={isPlaying ? "Pause" : "Play"}
-                  >
-                    {isPlaying ? (
-                      <svg className="h-4 w-4" viewBox="0 0 24 24" fill="currentColor">
-                        <path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z" />
-                      </svg>
-                    ) : (
-                      <svg className="h-4 w-4 translate-x-px" viewBox="0 0 24 24" fill="currentColor">
-                        <path d="M8 5v14l11-7z" />
-                      </svg>
-                    )}
-                  </button>
+                  {/* Transport — three mechanical square push buttons in a
+                      recessed housing, bottom-right of the plinth. The one
+                      matching the deck's state stays latched down, like the
+                      radio buttons on an old cassette deck. */}
+                  <div className="absolute bottom-[5%] right-[3%] flex gap-1 rounded-md bg-stone-950/80 border border-black/70 p-1 shadow-[inset_0_2px_5px_rgba(0,0,0,0.8)]">
+                    {(
+                      [
+                        {
+                          key: "stop" as const,
+                          label: "Stop",
+                          onClick: stop,
+                          icon: <rect x="7" y="7" width="10" height="10" rx="1" />,
+                        },
+                        {
+                          key: "play" as const,
+                          label: "Play",
+                          onClick: play,
+                          icon: <path d="M8 5v14l11-7z" />,
+                        },
+                        {
+                          key: "pause" as const,
+                          label: "Pause",
+                          onClick: pause,
+                          icon: <path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z" />,
+                        },
+                      ]
+                    ).map(({ key, label, onClick, icon }) => {
+                      const down = transport === key;
+                      return (
+                        <button
+                          key={key}
+                          onClick={onClick}
+                          aria-label={label}
+                          title={label}
+                          aria-pressed={down}
+                          className={`flex h-8 w-8 items-center justify-center rounded-[4px] border transition-all duration-100 ${
+                            down
+                              ? "translate-y-[2px] bg-gradient-to-b from-stone-600 to-stone-700 border-stone-800 text-amber-400 shadow-[inset_0_2px_4px_rgba(0,0,0,0.6)]"
+                              : "bg-gradient-to-b from-stone-200 to-stone-400 border-stone-500 text-stone-800 shadow-[0_2px_0_rgba(0,0,0,0.55)] hover:from-stone-100 hover:to-stone-300 active:translate-y-[2px] active:shadow-none"
+                          }`}
+                        >
+                          <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="currentColor">
+                            {icon}
+                          </svg>
+                        </button>
+                      );
+                    })}
+                  </div>
                 </div>
               </div>
 
