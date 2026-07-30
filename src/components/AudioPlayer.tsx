@@ -1,5 +1,7 @@
 import { useState, useRef, useCallback, useEffect } from "react";
 import { DockButton } from "./Dock";
+import { useYouTubeSync, type SyncMessage } from "../hooks/useYouTubeSync";
+import type { DataConnection } from "peerjs";
 
 function formatTime(seconds: number): string {
   if (!isFinite(seconds)) return "0:00";
@@ -9,6 +11,8 @@ function formatTime(seconds: number): string {
 }
 
 export function AudioPlayer({
+  id,
+  dataConnection,
   initialFile,
   onClose,
   spatialVolume = 1,
@@ -16,6 +20,8 @@ export function AudioPlayer({
   onToggleDock,
   onTrackChange,
 }: {
+  id: string;
+  dataConnection: DataConnection | null;
   initialFile?: File;
   onClose?: () => void;
   /** 0–1 multiplier from spatial positioning — updated by the parent on every canvas transform change. */
@@ -28,6 +34,8 @@ export function AudioPlayer({
 }) {
   const audioRef = useRef<HTMLAudioElement>(null);
   const objectUrlRef = useRef<string | null>(null);
+  const syncUntilRef = useRef(0);
+  const sendSyncRef = useRef<(message: SyncMessage) => void>(() => {});
 
   const [fileName, setFileName] = useState<string | null>(null);
   const [isPlaying, setIsPlaying] = useState(false);
@@ -36,6 +44,42 @@ export function AudioPlayer({
   const [volume, setVolume] = useState(1);
   const [minimised, setMinimised] = useState(false);
   const [isDragOver, setIsDragOver] = useState(false);
+
+  const handleRemoteSync = useCallback(
+    (message: SyncMessage) => {
+      if (
+        message.type !== "audio-play" &&
+        message.type !== "audio-pause" &&
+        message.type !== "audio-seek"
+      )
+        return;
+      if (message.id !== id) return;
+
+      const audio = audioRef.current;
+      if (!audio || !audio.src) return;
+      syncUntilRef.current = Date.now() + 500;
+      audio.currentTime = Math.max(
+        0,
+        Math.min(message.time, Number.isFinite(audio.duration) ? audio.duration : message.time),
+      );
+      setCurrentTime(audio.currentTime);
+
+      if (message.type === "audio-play") {
+        audio.play().catch(() => {
+          // Browser autoplay policy may require a local interaction first.
+        });
+      } else if (message.type === "audio-pause") {
+        audio.pause();
+      }
+    },
+    [id],
+  );
+
+  const { sendSync } = useYouTubeSync({
+    dataConnection,
+    onRemoteSync: handleRemoteSync,
+  });
+  sendSyncRef.current = sendSync;
 
   const loadFile = useCallback((file: File) => {
     if (!audioRef.current) return;
@@ -105,6 +149,7 @@ export function AudioPlayer({
     const t = parseFloat(e.target.value);
     audio.currentTime = t;
     setCurrentTime(t);
+    sendSync({ type: "audio-seek", id, time: t });
   };
 
   const handleVolume = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -125,8 +170,26 @@ export function AudioPlayer({
     const audio = audioRef.current;
     if (!audio) return;
 
-    const onPlay = () => setIsPlaying(true);
-    const onPause = () => setIsPlaying(false);
+    const onPlay = () => {
+      setIsPlaying(true);
+      if (Date.now() >= syncUntilRef.current) {
+        sendSyncRef.current({
+          type: "audio-play",
+          id,
+          time: audio.currentTime,
+        });
+      }
+    };
+    const onPause = () => {
+      setIsPlaying(false);
+      if (Date.now() >= syncUntilRef.current) {
+        sendSyncRef.current({
+          type: "audio-pause",
+          id,
+          time: audio.currentTime,
+        });
+      }
+    };
     const onEnded = () => setIsPlaying(false);
     const onTimeUpdate = () => setCurrentTime(audio.currentTime);
     const onDurationChange = () => setDuration(audio.duration);
@@ -144,7 +207,7 @@ export function AudioPlayer({
       audio.removeEventListener("timeupdate", onTimeUpdate);
       audio.removeEventListener("durationchange", onDurationChange);
     };
-  }, []);
+  }, [id]);
 
   // Revoke object URL on unmount
   useEffect(() => {

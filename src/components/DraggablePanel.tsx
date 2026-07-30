@@ -45,6 +45,69 @@ interface DraggablePanelProps {
   className?: string;
 }
 
+interface ResizeEdges {
+  top?: boolean;
+  right?: boolean;
+  bottom?: boolean;
+  left?: boolean;
+}
+
+const resizeHandles: Array<{
+  key: string;
+  edges: ResizeEdges;
+  className: string;
+  cursor: string;
+}> = [
+  {
+    key: "top",
+    edges: { top: true },
+    className: "top-0 left-3 right-3 h-2",
+    cursor: "ns-resize",
+  },
+  {
+    key: "right",
+    edges: { right: true },
+    className: "right-0 top-3 bottom-3 w-2",
+    cursor: "ew-resize",
+  },
+  {
+    key: "bottom",
+    edges: { bottom: true },
+    className: "bottom-0 left-3 right-3 h-2",
+    cursor: "ns-resize",
+  },
+  {
+    key: "left",
+    edges: { left: true },
+    className: "left-0 top-3 bottom-3 w-2",
+    cursor: "ew-resize",
+  },
+  {
+    key: "top-left",
+    edges: { top: true, left: true },
+    className: "top-0 left-0 w-3 h-3",
+    cursor: "nwse-resize",
+  },
+  {
+    key: "top-right",
+    edges: { top: true, right: true },
+    className: "top-0 right-0 w-3 h-3",
+    cursor: "nesw-resize",
+  },
+  {
+    key: "bottom-right",
+    edges: { bottom: true, right: true },
+    className: "bottom-0 right-0 w-3 h-3",
+    cursor: "nwse-resize",
+  },
+  {
+    key: "bottom-left",
+    edges: { bottom: true, left: true },
+    className: "bottom-0 left-0 w-3 h-3",
+    cursor: "nesw-resize",
+  },
+];
+
 export function DraggablePanel({
   state,
   onLocalUpdate,
@@ -86,24 +149,45 @@ export function DraggablePanel({
     onSyncUpdate(next);
   };
 
-  // ── Resize (bottom-right corner handle) ───────────────────────────────
-  const startResize = (startX: number, startY: number) => {
+  // ── Resize (all four edges and corners) ───────────────────────────────
+  const startResize = (
+    startX: number,
+    startY: number,
+    edges: ResizeEdges,
+  ) => {
+    const initial = stateRef.current;
     const origin = {
       mx: startX,
       my: startY,
-      w: stateRef.current.width,
-      h: stateRef.current.height,
+      state: initial,
     };
 
-    const applyResize = (clientX: number, clientY: number): PanelState => ({
-      ...stateRef.current,
-      width: Math.max(minWidth, origin.w + (clientX - origin.mx) / scale),
-      height: Math.max(minHeight, origin.h + (clientY - origin.my) / scale),
-    });
+    const applyResize = (clientX: number, clientY: number): PanelState => {
+      const dx = (clientX - origin.mx) / scale;
+      const dy = (clientY - origin.my) / scale;
+      const next = { ...origin.state };
+
+      if (edges.left) {
+        next.width = Math.max(minWidth, origin.state.width - dx);
+        next.x = origin.state.x + origin.state.width - next.width;
+      } else if (edges.right) {
+        next.width = Math.max(minWidth, origin.state.width + dx);
+      }
+
+      if (edges.top) {
+        next.height = Math.max(minHeight, origin.state.height - dy);
+        next.y = origin.state.y + origin.state.height - next.height;
+      } else if (edges.bottom) {
+        next.height = Math.max(minHeight, origin.state.height + dy);
+      }
+
+      return next;
+    };
 
     const onMouseMove = (ev: MouseEvent) => {
-      onLocalUpdate(applyResize(ev.clientX, ev.clientY));
-      scheduleSyncUpdate(applyResize(ev.clientX, ev.clientY));
+      const next = applyResize(ev.clientX, ev.clientY);
+      onLocalUpdate(next);
+      scheduleSyncUpdate(next);
     };
 
     const onMouseUp = (ev: MouseEvent) => {
@@ -138,16 +222,23 @@ export function DraggablePanel({
     window.addEventListener("touchend", onTouchEnd);
   };
 
-  const startResizeMouseDown = (e: React.MouseEvent) => {
+  const startResizeMouseDown = (
+    e: React.MouseEvent,
+    edges: ResizeEdges,
+  ) => {
     e.preventDefault();
     e.stopPropagation();
-    startResize(e.clientX, e.clientY);
+    startResize(e.clientX, e.clientY, edges);
   };
 
-  const startResizeTouchStart = (e: React.TouchEvent) => {
+  const startResizeTouchStart = (
+    e: React.TouchEvent,
+    edges: ResizeEdges,
+  ) => {
+    e.preventDefault();
     e.stopPropagation();
     const touch = e.touches[0];
-    startResize(touch.clientX, touch.clientY);
+    startResize(touch.clientX, touch.clientY, edges);
   };
 
   return (
@@ -176,16 +267,22 @@ export function DraggablePanel({
       >
         {children}
 
-        {/* Resize handle — bottom-right corner, larger hit area for touch */}
-        <div
-          onMouseDown={startResizeMouseDown}
-          onTouchStart={startResizeTouchStart}
-          className="no-drag absolute bottom-0 right-0 w-8 h-8 z-20 cursor-se-resize rounded-br-xl"
-          style={{
-            background:
-              "linear-gradient(135deg, transparent 40%, rgba(255,255,255,0.18) 40%)",
-          }}
-        />
+        {resizeHandles.map((handle) => (
+          <div
+            key={handle.key}
+            onMouseDown={(event) =>
+              startResizeMouseDown(event, handle.edges)
+            }
+            onTouchStart={(event) =>
+              startResizeTouchStart(event, handle.edges)
+            }
+            className={`no-drag absolute z-20 ${handle.className}`}
+            style={{
+              cursor: handle.cursor,
+              touchAction: "none",
+            }}
+          />
+        ))}
       </div>
     </Draggable>
   );

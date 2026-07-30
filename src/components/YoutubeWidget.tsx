@@ -36,11 +36,15 @@ interface YoutubeWidgetProps {
 
 function parseVideoId(input: string): string | null {
   try {
-    const url = new URL(input);
-    if (url.hostname === "youtu.be") return url.pathname.slice(1).split("?")[0];
+    const url = new URL(input.trim());
+    const hostname = url.hostname.toLowerCase().replace(/^(www\.|m\.)/, "");
+    if (hostname === "youtu.be") return url.pathname.slice(1).split("/")[0];
+    if (hostname !== "youtube.com") return null;
     if (url.searchParams.has("v")) return url.searchParams.get("v");
-    const embedMatch = url.pathname.match(/\/embed\/([^/?]+)/);
-    if (embedMatch) return embedMatch[1];
+    const pathMatch = url.pathname.match(
+      /^\/(?:embed|shorts|live)\/([^/?]+)/,
+    );
+    if (pathMatch) return pathMatch[1];
   } catch {
     // not a URL — treat as raw ID
     if (/^[a-zA-Z0-9_-]{11}$/.test(input.trim())) return input.trim();

@@ -103,10 +103,12 @@ function defaultFixedPanels(): Record<PanelId, PanelState> {
 function parseYouTubeVideoId(input: string): string | null {
 	try {
 		const url = new URL(input.trim());
-		if (url.hostname === 'youtu.be') return url.pathname.slice(1).split('?')[0];
+		const hostname = url.hostname.toLowerCase().replace(/^(www\.|m\.)/, '');
+		if (hostname === 'youtu.be') return url.pathname.slice(1).split('/')[0];
+		if (hostname !== 'youtube.com') return null;
 		if (url.searchParams.has('v')) return url.searchParams.get('v');
-		const embedMatch = url.pathname.match(/\/embed\/([^/?]+)/);
-		if (embedMatch) return embedMatch[1];
+		const pathMatch = url.pathname.match(/^\/(?:embed|shorts|live)\/([^/?]+)/);
+		if (pathMatch) return pathMatch[1];
 	} catch {
 		if (/^[a-zA-Z0-9_-]{11}$/.test(input.trim())) return input.trim();
 	}
@@ -478,6 +480,32 @@ export function Session({ roomCode, isHost }: SessionProps) {
 			}
 		}
 	};
+
+	useEffect(() => {
+		const handleClipboardPaste = (e: ClipboardEvent) => {
+			// The YouTube widget has its own paste handler. Likewise, never
+			// hijack clipboard input from any other editable control.
+			if (e.defaultPrevented) return;
+			const target = e.target as HTMLElement | null;
+			if (
+				target instanceof HTMLInputElement ||
+				target instanceof HTMLTextAreaElement ||
+				target?.isContentEditable
+			)
+				return;
+
+			const videoId = parseYouTubeVideoId(e.clipboardData?.getData('text/plain') ?? '');
+			if (!videoId) return;
+
+			e.preventDefault();
+			spawnPanel('youtube', window.innerWidth / 2, window.innerHeight / 2, {
+				initialVideoId: videoId
+			});
+		};
+
+		document.addEventListener('paste', handleClipboardPaste);
+		return () => document.removeEventListener('paste', handleClipboardPaste);
+	});
 
 	useEffect(() => {
 		let stream: MediaStream | undefined;
@@ -896,6 +924,8 @@ export function Session({ roomCode, isHost }: SessionProps) {
 							/>
 						) : (
 							<AudioPlayer
+								id={panel.id}
+								dataConnection={dataConnection}
 								initialFile={panel.initialFile}
 								onClose={() => removePanel(panel.id)}
 								spatialVolume={spatialVolumeForPanel(panel.state)}
