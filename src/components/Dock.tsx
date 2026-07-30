@@ -183,10 +183,11 @@ export function Dock({ entries, onJump, onRemove, onRename, onPing }: DockProps)
     onPing(id);
     setPinged(p => (p.includes(id) ? p : [...p, id]));
     if (pingTimers.current[id]) clearTimeout(pingTimers.current[id]);
+    // Long enough for the last of the three staggered rings to finish
     pingTimers.current[id] = setTimeout(() => {
       setPinged(p => p.filter(x => x !== id));
       delete pingTimers.current[id];
-    }, 1400);
+    }, 1900);
   };
   // id of the chip currently being renamed, plus its in-progress text
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -272,7 +273,7 @@ export function Dock({ entries, onJump, onRemove, onRename, onPing }: DockProps)
 
             <button
               onClick={() => ping(entry.id)}
-              className={`shrink-0 transition-colors ${
+              className={`relative shrink-0 transition-colors ${
                 pinged.includes(entry.id)
                   ? "text-violet-300"
                   : "text-zinc-500 hover:text-violet-400"
@@ -280,6 +281,15 @@ export function Dock({ entries, onJump, onRemove, onRename, onPing }: DockProps)
               title={`Ping — make ${entry.label} flash on their screen`}
               aria-label={`Ping ${entry.label}`}
             >
+              {/* Sender-side confirmation: concentric rings radiate out from
+                  the button, echoing the pulse landing on the other screen. */}
+              {pinged.includes(entry.id) && (
+                <>
+                  <span className="ping-radiate" />
+                  <span className="ping-radiate" style={{ animationDelay: "0.35s" }} />
+                  <span className="ping-radiate" style={{ animationDelay: "0.7s" }} />
+                </>
+              )}
               <svg
                 className="w-3.5 h-3.5"
                 fill="none"
@@ -314,26 +324,30 @@ export function Dock({ entries, onJump, onRemove, onRename, onPing }: DockProps)
               </svg>
             </button>
 
-            <button
-              onClick={() => onRemove(entry.id)}
-              className="text-zinc-400 hover:text-red-400 transition-colors shrink-0"
-              title="Undock (remove from this bar)"
-              aria-label={`Remove ${entry.label} from dock`}
-            >
-              <svg
-                className="w-3.5 h-3.5"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth={2.5}
-                viewBox="0 0 24 24"
+            {/* Participants are permanent anchors — you can always get back to
+                a face, so their chips carry no delete button. */}
+            {entry.type !== "local" && entry.type !== "remote" && (
+              <button
+                onClick={() => onRemove(entry.id)}
+                className="text-zinc-400 hover:text-red-400 transition-colors shrink-0"
+                title="Undock (remove from this bar)"
+                aria-label={`Remove ${entry.label} from dock`}
               >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  d="M6 18L18 6M6 6l12 12"
-                />
-              </svg>
-            </button>
+                <svg
+                  className="w-3.5 h-3.5"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth={2.5}
+                  viewBox="0 0 24 24"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    d="M6 18L18 6M6 6l12 12"
+                  />
+                </svg>
+              </button>
+            )}
           </div>
         ),
       )}

@@ -79,9 +79,40 @@ body {
   animation: position-tag-ripple 1.2s ease-out 2 forwards;
 }
 
+/*
+ * Sender-side ping confirmation — concentric rings radiating out from the
+ * ping button, so clicking it visibly *does* something on your own screen
+ * while the pulse lands on the other person's. Three of these run staggered.
+ */
+@keyframes ping-radiate {
+  0% {
+    transform: scale(0.4);
+    opacity: 0.9;
+  }
+  100% {
+    transform: scale(3);
+    opacity: 0;
+  }
+}
+
+.ping-radiate {
+  position: absolute;
+  inset: 0;
+  border-radius: 9999px;
+  border: 1.5px solid #c4b5fd;
+  pointer-events: none;
+  opacity: 0;
+  animation: ping-radiate 1.1s ease-out forwards;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .dock-pulse,
   .position-tag-ripple {
+    animation: none;
+  }
+
+  /* The icon's colour change carries the confirmation instead */
+  .ping-radiate {
     animation: none;
   }
 

@@ -632,12 +632,19 @@ export function Session({ roomCode, isHost }: SessionProps) {
 		sendSync({ type: 'remove-panel', id });
 	};
 
+	// The video panels are permanent anchors — you can always get back to a
+	// face. Their chips carry no delete button, and this guard backs that up
+	// so no other path (panel bookmark, double-click) can un-dock one either.
+	const isParticipantId = (id: string) =>
+		id === 'local' || id === 'remote' || peerIdFromPanelId(id) !== null;
+
 	// Tagging is shared; untagging is not. Removing a chip clears it from your
 	// own bar only — nobody gets to delete a bookmark out of the other's UI.
 	const toggleDock = (id: string) => {
 		// The send stays outside the state updater — StrictMode invokes updaters
 		// twice, which would tag the peer twice.
 		if (dockedIds.includes(id)) {
+			if (isParticipantId(id)) return;
 			acknowledgePulse(id);
 			setDockedIds(prev => prev.filter(d => d !== id));
 			return;
@@ -1549,7 +1556,9 @@ export function Session({ roomCode, isHost }: SessionProps) {
 				{localStream && localStream.getTracks().length > 0 && (
 					<DraggablePanel state={fixedPanels.local} {...makePanelHandlers('local')} onToggleDock={() => toggleDock('local')} minWidth={200} minHeight={120} scale={canvas.scale} className="z-10">
 						{zoomTagHandle('local', 'You')}
-						<VideoPanel stream={localStream} label="You" muted docked={dockedIds.includes('local')} onToggleDock={() => toggleDock('local')} />
+						{/* No onToggleDock: participants are permanently docked, so a
+						    bookmark toggle here would be a button that does nothing */}
+						<VideoPanel stream={localStream} label="You" muted docked={dockedIds.includes('local')} />
 					</DraggablePanel>
 				)}
 
@@ -1580,7 +1589,6 @@ export function Session({ roomCode, isHost }: SessionProps) {
 								stream={stream}
 								label={label}
 								docked={dockedIds.includes(panelId)}
-								onToggleDock={() => toggleDock(panelId)}
 							/>
 						</DraggablePanel>
 					);
