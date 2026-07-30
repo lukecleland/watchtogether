@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { METALS, metalFor, type Nib } from "../utils/brush";
 
 /**
  * WhiteboardToolbar — a floating tool island with a contextual properties panel.
@@ -33,9 +34,11 @@ interface WhiteboardToolbarProps {
   tool: "pen" | "eraser";
   color: string;
   width: number;
+  nib: Nib;
   onToolChange: (t: "pen" | "eraser") => void;
   onColorChange: (c: string) => void;
   onWidthChange: (w: number) => void;
+  onNibChange: (n: Nib) => void;
   onClear: () => void;
 }
 
@@ -49,6 +52,122 @@ const COLORS = [
   "#c084fc",
   "#f472b6"
 ];
+
+/** Bright, saturated shades — the only ones that read as highlighting. */
+const HIGHLIGHTER_COLORS = [
+  "#facc15",
+  "#4ade80",
+  "#22d3ee",
+  "#fb923c",
+  "#f472b6",
+  "#a3e635"
+];
+
+const NIBS: { id: Nib; label: string; hint: string }[] = [
+  { id: "ballpoint", label: "Ballpoint", hint: "Even, solid line" },
+  { id: "fountain", label: "Fountain", hint: "Thins as you speed up" },
+  { id: "pencil", label: "Pencil", hint: "Light, grainy" },
+  { id: "charcoal", label: "Charcoal", hint: "Loose and scattered" },
+  { id: "highlighter", label: "Highlighter", hint: "Wide and translucent" },
+  { id: "neon", label: "Neon", hint: "Glowing" }
+];
+
+/** A little preview of what each nib lays down, drawn the way the board draws it. */
+function NibSwatch({ nib, color }: { nib: Nib; color: string }) {
+  const ref = useRef<HTMLCanvasElement>(null);
+  useEffect(() => {
+    const cv = ref.current;
+    const ctx = cv?.getContext("2d");
+    if (!cv || !ctx) return;
+    const w = cv.width;
+    const h = cv.height;
+    ctx.clearRect(0, 0, w, h);
+    const metal = metalFor(color);
+    const pts: [number, number][] = [];
+    for (let i = 0; i <= 24; i++) {
+      const t = i / 24;
+      pts.push([4 + t * (w - 8), h / 2 + Math.sin(t * Math.PI * 1.6) * (h * 0.22)]);
+    }
+    let seed = 7;
+    const rnd = () => ((seed = (seed * 1664525 + 1013904223) >>> 0), seed / 4294967296);
+    ctx.lineCap = "round";
+    for (let i = 1; i < pts.length; i++) {
+      const [x0, y0] = pts[i - 1];
+      const [x1, y1] = pts[i];
+      ctx.globalAlpha = 1;
+      ctx.shadowBlur = 0;
+      if (metal) {
+        const dx = x1 - x0;
+        const dy = y1 - y0;
+        const len = Math.hypot(dx, dy) || 1;
+        const g = ctx.createLinearGradient(
+          (x0 + x1) / 2 + (dy / len) * 3,
+          (y0 + y1) / 2 - (dx / len) * 3,
+          (x0 + x1) / 2 - (dy / len) * 3,
+          (y0 + y1) / 2 + (dx / len) * 3
+        );
+        g.addColorStop(0, metal[0]);
+        g.addColorStop(0.45, metal[1]);
+        g.addColorStop(0.55, metal[1]);
+        g.addColorStop(1, metal[2]);
+        ctx.strokeStyle = g;
+        ctx.lineWidth = 6;
+      } else {
+        ctx.strokeStyle = color;
+        ctx.lineWidth = 3;
+      }
+      if (nib === "fountain") ctx.lineWidth = 1.5 + Math.abs(Math.cos((i / 24) * Math.PI * 1.6)) * 4;
+      if (nib === "pencil") {
+        ctx.globalAlpha = 0.3;
+        ctx.lineWidth = 1.2;
+        for (let k = 0; k < 3; k++) {
+          const j = () => (rnd() - 0.5) * 3;
+          ctx.beginPath();
+          ctx.moveTo(x0 + j(), y0 + j());
+          ctx.lineTo(x1 + j(), y1 + j());
+          ctx.stroke();
+        }
+        continue;
+      }
+      if (nib === "charcoal") {
+        ctx.globalAlpha = 0.16;
+        ctx.fillStyle = color;
+        for (let k = 0; k < 6; k++) {
+          const a = rnd() * Math.PI * 2;
+          const d = rnd() * 5;
+          ctx.beginPath();
+          ctx.arc(x1 + Math.cos(a) * d, y1 + Math.sin(a) * d, rnd() * 1.5 + 0.4, 0, 7);
+          ctx.fill();
+        }
+        continue;
+      }
+      if (nib === "highlighter") {
+        ctx.globalAlpha = 0.25;
+        ctx.lineWidth = 11;
+        ctx.lineCap = "butt";
+      }
+      if (nib === "neon") {
+        ctx.shadowBlur = 8;
+        ctx.shadowColor = color;
+      }
+      ctx.beginPath();
+      ctx.moveTo(x0, y0);
+      ctx.lineTo(x1, y1);
+      ctx.stroke();
+      if (nib === "neon") {
+        ctx.shadowBlur = 0;
+        ctx.globalAlpha = 0.85;
+        ctx.strokeStyle = "#fff";
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(x0, y0);
+        ctx.lineTo(x1, y1);
+        ctx.stroke();
+      }
+    }
+  }, [nib, color]);
+  return <canvas ref={ref} width={144} height={40} className="w-[72px] h-[20px]" aria-hidden="true" />;
+}
 
 const SIZES = [
   { label: "S", value: 3 },
@@ -64,9 +183,11 @@ export function WhiteboardToolbar({
   tool,
   color,
   width,
+  nib,
   onToolChange,
   onColorChange,
   onWidthChange,
+  onNibChange,
   onClear
 }: WhiteboardToolbarProps) {
   const [panelOpen, setPanelOpen] = useState(false);
@@ -147,7 +268,14 @@ export function WhiteboardToolbar({
         >
           <span
             className="w-5 h-5 rounded-lg border border-zinc-500"
-            style={{ background: tool === "eraser" ? "transparent" : color }}
+            style={{
+              background:
+                tool === "eraser"
+                  ? "transparent"
+                  : color.startsWith("metal:")
+                    ? `linear-gradient(135deg, ${METALS[color.slice(6)]?.join(", ")})`
+                    : color
+            }}
           >
             {tool === "eraser" && (
               <svg className="w-full h-full text-zinc-400" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
@@ -184,9 +312,32 @@ export function WhiteboardToolbar({
         >
           {tool === "pen" && (
             <>
+              <p className="text-[11px] uppercase tracking-wide text-zinc-500 mb-2">Nib</p>
+              <div className="grid grid-cols-2 gap-1 mb-3.5">
+                {NIBS.map(n => (
+                  <button
+                    key={n.id}
+                    onClick={() => onNibChange(n.id)}
+                    title={`${n.label} — ${n.hint}`}
+                    aria-label={n.label}
+                    aria-pressed={nib === n.id}
+                    className={`flex flex-col items-center gap-0.5 px-1 py-1.5 rounded-lg transition-colors ${
+                      nib === n.id ? "bg-zinc-700" : "hover:bg-zinc-800"
+                    }`}
+                  >
+                    <NibSwatch nib={n.id} color={color} />
+                    <span className="text-[10px] leading-none text-zinc-400">{n.label}</span>
+                  </button>
+                ))}
+              </div>
+
               <p className="text-[11px] uppercase tracking-wide text-zinc-500 mb-2">Colour</p>
-              <div className="grid grid-cols-8 gap-1.5 mb-3.5">
-                {COLORS.map(c => (
+              <div
+                className={`grid gap-1.5 mb-2 ${
+                  nib === "highlighter" ? "grid-cols-6" : "grid-cols-8"
+                }`}
+              >
+                {(nib === "highlighter" ? HIGHLIGHTER_COLORS : COLORS).map(c => (
                   <button
                     key={c}
                     onClick={() => onColorChange(c)}
@@ -200,6 +351,39 @@ export function WhiteboardToolbar({
                   />
                 ))}
               </div>
+
+              {/* Metallics are gradients, so they can't be a flat swatch —
+                  and they're pointless behind a translucent highlighter. */}
+              {nib !== "highlighter" && (
+                <div className="grid grid-cols-4 gap-1.5 mb-2">
+                  {Object.entries(METALS).map(([name, [a, b, c]]) => (
+                    <button
+                      key={name}
+                      onClick={() => onColorChange(`metal:${name}`)}
+                      title={name}
+                      aria-label={`Metallic ${name}`}
+                      aria-pressed={color === `metal:${name}`}
+                      style={{ background: `linear-gradient(135deg, ${a}, ${b} 45%, ${c})` }}
+                      className={`w-full aspect-square rounded-md transition-transform hover:scale-110 ${
+                        color === `metal:${name}`
+                          ? "ring-2 ring-white ring-offset-2 ring-offset-zinc-900"
+                          : ""
+                      }`}
+                    />
+                  ))}
+                </div>
+              )}
+
+              <label className="flex items-center gap-2 mb-3.5 text-[11px] text-zinc-500 cursor-pointer">
+                <input
+                  type="color"
+                  value={color.startsWith("metal:") ? "#ffffff" : color}
+                  onChange={e => onColorChange(e.target.value)}
+                  aria-label="Custom colour"
+                  className="w-6 h-6 rounded-md bg-transparent border border-zinc-600 cursor-pointer p-0"
+                />
+                Custom
+              </label>
             </>
           )}
 

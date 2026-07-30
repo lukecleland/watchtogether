@@ -5,6 +5,7 @@ import {
   forwardRef,
   useImperativeHandle,
 } from "react";
+import { metalFor, type Nib } from "../utils/brush";
 
 /**
  * Whiteboard — a full-screen collaborative drawing canvas.
@@ -41,7 +42,11 @@ export interface WhiteboardStroke {
   y1: number;
   color: string;
   width: number; // normalised: fraction of Math.min(viewportW, viewportH)
+  /** Absent on strokes from a peer running an older build — treat as ballpoint. */
+  nib?: Nib;
 }
+
+export type { Nib };
 
 export interface WhiteboardHandle {
   drawStroke(stroke: WhiteboardStroke): void;
@@ -52,17 +57,47 @@ interface WhiteboardProps {
   tool: "pen" | "eraser";
   color: string;
   width: number; // raw toolbar pixel size (3 / 8 / 16)
+  nib: Nib;
   onStroke: (stroke: WhiteboardStroke) => void;
   canvasTransform: { x: number; y: number; scale: number };
 }
 
+/**
+ * Deterministic per-segment randomness.
+ *
+ * Pencil and charcoal are textured, and the canvas is wiped and every stroke
+ * replayed on each pan, zoom and resize. Fresh randomness on each replay would
+ * make the grain reshuffle constantly — the whole board would crawl. Seeding
+ * from the segment's own coordinates makes a segment's texture a property of
+ * the segment, so it redraws identically forever, and identically on both
+ * peers' screens.
+ */
+function seedFor(s: WhiteboardStroke): number {
+  const a = Math.round(s.x0 * 1e5);
+  const b = Math.round(s.y0 * 1e5);
+  const c = Math.round(s.x1 * 1e5);
+  const d = Math.round(s.y1 * 1e5);
+  const h = (a * 73856093) ^ (b * 19349663) ^ (c * 83492791) ^ (d * 26183659);
+  return (h >>> 0) || 1;
+}
+
+function rngFrom(seed: number): () => number {
+  let s = seed;
+  return () => {
+    s = (s * 1664525 + 1013904223) >>> 0;
+    return s / 4294967296;
+  };
+}
+
 const Whiteboard = forwardRef<WhiteboardHandle, WhiteboardProps>(
-  ({ tool, color, width, onStroke, canvasTransform }, ref) => {
+  ({ tool, color, width, nib, onStroke, canvasTransform }, ref) => {
     const canvasRef = useRef<HTMLCanvasElement>(null);
     const isDrawingRef = useRef(false);
     const lastPointRef = useRef<{ x: number; y: number } | null>(null);
     // All strokes in world-normalised space, so they can be replayed on zoom/pan
     const strokesRef = useRef<WhiteboardStroke[]>([]);
+    // Rolling state for the fountain nib's speed-driven taper
+    const fountainRef = useRef({ w: 1, at: 0 });
     // Always-current transform without stale closure issues
     const canvasTransformRef = useRef(canvasTransform);
     canvasTransformRef.current = canvasTransform;
@@ -86,19 +121,117 @@ const Whiteboard = forwardRef<WhiteboardHandle, WhiteboardProps>(
       const py1 = (stroke.y1 * vh * scale + ty) * dpr;
 
       const isEraser = stroke.color === "__eraser__";
-      ctx.globalCompositeOperation = isEraser
-        ? "destination-out"
-        : "source-over";
-      ctx.beginPath();
-      ctx.moveTo(px0, py0);
-      ctx.lineTo(px1, py1);
-      ctx.strokeStyle = isEraser ? "rgba(0,0,0,1)" : stroke.color;
       // Width is normalised to viewport — also scale it with the zoom level
-      ctx.lineWidth = stroke.width * Math.min(vw, vh) * scale * dpr;
+      const lw = stroke.width * Math.min(vw, vh) * scale * dpr;
+      const strokeNib: Nib = stroke.nib ?? "ballpoint";
+
+      const line = (a: number, b: number, c: number, d: number) => {
+        ctx.beginPath();
+        ctx.moveTo(a, b);
+        ctx.lineTo(c, d);
+        ctx.stroke();
+      };
+
+      ctx.save();
       ctx.lineCap = "round";
       ctx.lineJoin = "round";
-      ctx.stroke();
-      ctx.globalCompositeOperation = "source-over";
+      ctx.globalCompositeOperation = isEraser ? "destination-out" : "source-over";
+
+      if (isEraser) {
+        ctx.strokeStyle = "rgba(0,0,0,1)";
+        ctx.lineWidth = lw;
+        line(px0, py0, px1, py1);
+        ctx.restore();
+        return;
+      }
+
+      // Metallic: paint the segment with a gradient across its own width
+      const metal = metalFor(stroke.color);
+      if (metal) {
+        const dx = px1 - px0;
+        const dy = py1 - py0;
+        const len = Math.hypot(dx, dy) || 1;
+        const nx = -dy / len;
+        const ny = dx / len;
+        const mx = (px0 + px1) / 2;
+        const my = (py0 + py1) / 2;
+        const g = ctx.createLinearGradient(
+          mx - (nx * lw) / 2,
+          my - (ny * lw) / 2,
+          mx + (nx * lw) / 2,
+          my + (ny * lw) / 2
+        );
+        // A wide bright core so even a thin stroke still reads as metal rather
+        // than antialiasing down to a muddy average of the two dark edges
+        g.addColorStop(0, metal[0]);
+        g.addColorStop(0.32, metal[1]);
+        g.addColorStop(0.68, metal[1]);
+        g.addColorStop(1, metal[2]);
+        ctx.strokeStyle = g;
+        ctx.lineWidth = lw;
+        line(px0, py0, px1, py1);
+        ctx.restore();
+        return;
+      }
+
+      ctx.strokeStyle = stroke.color;
+
+      if (strokeNib === "pencil") {
+        // A few thin, jittered passes read as graphite catching on paper
+        const r = rngFrom(seedFor(stroke));
+        const spread = lw * 0.55;
+        ctx.globalAlpha = 0.3;
+        ctx.lineWidth = Math.max(0.6, lw * 0.42);
+        for (let i = 0; i < 3; i++) {
+          const j = () => (r() - 0.5) * spread;
+          line(px0 + j(), py0 + j(), px1 + j(), py1 + j());
+        }
+      } else if (strokeNib === "charcoal") {
+        // Scattered specks around the path, heavier and looser than pencil
+        const r = rngFrom(seedFor(stroke));
+        ctx.fillStyle = stroke.color;
+        ctx.globalAlpha = 0.16;
+        const specks = 8;
+        for (let i = 0; i < specks; i++) {
+          const t = r();
+          const cx = px0 + (px1 - px0) * t;
+          const cy = py0 + (py1 - py0) * t;
+          const a = r() * Math.PI * 2;
+          const d = r() * lw * 0.85;
+          ctx.beginPath();
+          ctx.arc(
+            cx + Math.cos(a) * d,
+            cy + Math.sin(a) * d,
+            Math.max(0.5, r() * lw * 0.22),
+            0,
+            Math.PI * 2
+          );
+          ctx.fill();
+        }
+      } else if (strokeNib === "highlighter") {
+        // Wide, flat-ended and translucent, so overlaps build up like ink
+        ctx.globalAlpha = 0.22;
+        ctx.lineCap = "butt";
+        ctx.lineWidth = lw * 3.2;
+        line(px0, py0, px1, py1);
+      } else if (strokeNib === "neon") {
+        ctx.shadowBlur = Math.max(6, lw * 2.4);
+        ctx.shadowColor = stroke.color;
+        ctx.lineWidth = lw;
+        line(px0, py0, px1, py1);
+        // A pale core sells the tube-of-light look
+        ctx.shadowBlur = 0;
+        ctx.globalAlpha = 0.85;
+        ctx.strokeStyle = "#ffffff";
+        ctx.lineWidth = Math.max(0.7, lw * 0.34);
+        line(px0, py0, px1, py1);
+      } else {
+        // ballpoint, and fountain — whose taper is baked into `width` at emit
+        ctx.lineWidth = lw;
+        line(px0, py0, px1, py1);
+      }
+
+      ctx.restore();
     }, []); // stable — reads transform from ref
 
     // Clear and repaint all stored strokes (called on zoom/pan/resize)
@@ -203,6 +336,7 @@ const Whiteboard = forwardRef<WhiteboardHandle, WhiteboardProps>(
         return;
       }
       const touch = e.touches[0];
+      fountainRef.current = { w: 1, at: performance.now() };
       isDrawingRef.current = true;
       lastPointRef.current = getPosFromClient(touch.clientX, touch.clientY);
     };
@@ -225,7 +359,27 @@ const Whiteboard = forwardRef<WhiteboardHandle, WhiteboardProps>(
     const emitStroke = (curr: { x: number; y: number }) => {
       if (!lastPointRef.current) return;
       const prev = lastPointRef.current;
-      const rawPx = tool === "eraser" ? width * 5 : width;
+      let rawPx = tool === "eraser" ? width * 5 : width;
+
+      // A fountain nib thins as the hand speeds up. Replay has no timing —
+      // the canvas is redrawn from stored segments — so the taper has to be
+      // measured live and baked into each segment's width.
+      if (tool === "pen" && nib === "fountain") {
+        const now = performance.now();
+        const dt = Math.max(8, now - fountainRef.current.at);
+        const { scale } = canvasTransformRef.current;
+        // Judge speed by how fast the hand moves on *screen*, not in world
+        // units, so a zoomed-out board doesn't read as a frantic scribble.
+        const dxs = (curr.x - prev.x) * window.innerWidth * scale;
+        const dys = (curr.y - prev.y) * window.innerHeight * scale;
+        const speed = Math.hypot(dxs, dys) / dt;
+        const target = Math.max(0.35, Math.min(1.55, 1.55 - speed * 0.3));
+        // Ease towards the target so the line doesn't judder frame to frame
+        fountainRef.current.w = fountainRef.current.w * 0.6 + target * 0.4;
+        fountainRef.current.at = now;
+        rawPx = width * fountainRef.current.w;
+      }
+
       const stroke: WhiteboardStroke = {
         x0: prev.x,
         y0: prev.y,
@@ -234,6 +388,7 @@ const Whiteboard = forwardRef<WhiteboardHandle, WhiteboardProps>(
         color: tool === "eraser" ? "__eraser__" : color,
         // Normalise so it looks proportionally the same on the remote screen
         width: rawPx / Math.min(window.innerWidth, window.innerHeight),
+        ...(tool === "pen" ? { nib } : {})
       };
       strokesRef.current.push(stroke);
       drawSegment(stroke);
