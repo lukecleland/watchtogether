@@ -224,6 +224,14 @@ export function WhiteboardToolbar({
   }, [panelOpen]);
 
   const selectTool = (t: Tool) => {
+    // The region tool has no options — every section of the panel (colour,
+    // size) belongs to the drawing tools, so opening it here would show
+    // controls that affect nothing.
+    if (t === "region") {
+      onToolChange(t);
+      setPanelOpen(false);
+      return;
+    }
     // Re-tapping the active tool toggles its options rather than doing nothing
     if (t === tool) setPanelOpen(o => !o);
     else {
@@ -238,10 +246,10 @@ export function WhiteboardToolbar({
   const toolButton = (t: Tool, label: string, path: string, swatch = false) => (
     <button
       onClick={() => selectTool(t)}
-      title={tool === t ? `${label} — tap for options` : label}
+      title={tool === t && t !== "region" ? `${label} — tap for options` : label}
       aria-label={label}
       aria-pressed={tool === t}
-      aria-expanded={tool === t ? panelOpen : undefined}
+      aria-expanded={tool === t && t !== "region" ? panelOpen : undefined}
       className={`relative w-9 h-9 flex items-center justify-center rounded-xl transition-colors ${
         tool === t
           ? "bg-violet-600 text-white"
@@ -264,7 +272,7 @@ export function WhiteboardToolbar({
         />
       )}
 
-      {tool === t && (
+      {tool === t && t !== "region" && (
         <svg
           aria-hidden="true"
           className="absolute -bottom-0.5 right-0.5 w-2.5 h-2.5 opacity-80"
