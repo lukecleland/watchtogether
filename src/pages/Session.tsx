@@ -440,7 +440,11 @@ export function Session({ roomCode, isHost }: SessionProps) {
 		// on screen with a margin, and stay inside the app's zoom limits.
 		const fitScale = positionTag ? canvasStateRef.current.scale : Math.min((vw * 0.9) / target.width, (vh * 0.85) / target.height);
 		const idealScale = positionTag ? canvasStateRef.current.scale : IDEAL_ON_SCREEN_WIDTH[type] / target.width;
-		const toScale = positionTag ? canvasStateRef.current.scale : Math.max(0.25, Math.min(4, fitScale, idealScale));
+		// Position tags are points of interest rather than sizeable panels:
+		// centre the point and zoom closer on every visit.
+		const toScale = positionTag
+			? Math.min(4, Math.max(1.5, canvasStateRef.current.scale * 1.6))
+			: Math.max(0.25, Math.min(4, fitScale, idealScale));
 
 		const { x: fromX, y: fromY, scale: fromScale } = canvasStateRef.current;
 		const destX = vw / 2 - (target.x + target.width / 2) * toScale;
