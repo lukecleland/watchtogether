@@ -37,6 +37,8 @@ interface DraggablePanelProps {
   onSyncUpdate: (next: PanelState) => void;
   /** Called on pointer-down to raise this panel above others. */
   onBringToFront: () => void;
+  /** Double-clicking a non-interactive panel surface toggles its dock tag. */
+  onToggleDock?: () => void;
   minWidth?: number;
   minHeight?: number;
   /** Canvas zoom scale — passed to react-draggable so drag deltas are correct. */
@@ -113,6 +115,7 @@ export function DraggablePanel({
   onLocalUpdate,
   onSyncUpdate,
   onBringToFront,
+  onToggleDock,
   minWidth = 240,
   minHeight = 140,
   scale = 1,
@@ -265,6 +268,16 @@ export function DraggablePanel({
         }}
         className={`absolute ${className}`}
         onPointerDown={onBringToFront}
+        onDoubleClick={(event) => {
+          const target = event.target as HTMLElement;
+          if (
+            target.closest(
+              "input, button, a, textarea, select, iframe, .no-drag, [contenteditable='true']",
+            )
+          )
+            return;
+          onToggleDock?.();
+        }}
       >
         {children}
 
