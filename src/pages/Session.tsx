@@ -35,6 +35,7 @@ import { AudioPlayer } from '../components/AudioPlayer';
 import { StickyNote } from '../components/StickyNote';
 import { DraggablePanel } from '../components/DraggablePanel';
 import { Whiteboard, type WhiteboardHandle, type WhiteboardStroke } from '../components/Whiteboard';
+import type { Nib } from '../utils/brush';
 import { WhiteboardToolbar } from '../components/WhiteboardToolbar';
 import { Dock, type DockEntry } from '../components/Dock';
 import { usePeer } from '../hooks/usePeer';
@@ -195,6 +196,12 @@ export function Session({ roomCode, isHost }: SessionProps) {
 	const [wbTool, setWbTool] = useState<'pen' | 'eraser'>('pen');
 	const [wbColor, setWbColor] = useState('#ffffff');
 	const [wbWidth, setWbWidth] = useState(3);
+	const [wbNib, setWbNib] = useState<Nib>('ballpoint');
+	// The highlighter keeps its own colour. Sharing the pen's would mean
+	// highlighting in white, which does nothing on a dark canvas.
+	const [wbHighlightColor, setWbHighlightColor] = useState('#facc15');
+	const activeColor = wbNib === 'highlighter' ? wbHighlightColor : wbColor;
+	const setActiveColor = (c: string) => (wbNib === 'highlighter' ? setWbHighlightColor(c) : setWbColor(c));
 
 	const { remoteStream, dataConnection, status, error } = usePeer({
 		roomCode,
@@ -1099,10 +1106,20 @@ export function Session({ roomCode, isHost }: SessionProps) {
 			)}
 
 			{/* Whiteboard canvas — sits below all panels, transparent so grid shows through */}
-			<Whiteboard ref={whiteboardRef} tool={wbTool} color={wbColor} width={wbWidth} onStroke={handleWbStroke} canvasTransform={canvas} />
+			<Whiteboard ref={whiteboardRef} tool={wbTool} color={activeColor} width={wbWidth} nib={wbNib} onStroke={handleWbStroke} canvasTransform={canvas} />
 
 			{/* Whiteboard toolbar */}
-			<WhiteboardToolbar tool={wbTool} color={wbColor} width={wbWidth} onToolChange={setWbTool} onColorChange={setWbColor} onWidthChange={setWbWidth} onClear={handleWbClear} />
+			<WhiteboardToolbar
+				tool={wbTool}
+				color={activeColor}
+				width={wbWidth}
+				nib={wbNib}
+				onToolChange={setWbTool}
+				onColorChange={setActiveColor}
+				onWidthChange={setWbWidth}
+				onNibChange={setWbNib}
+				onClear={handleWbClear}
+			/>
 
 			{/* Space-key pan overlay — sits above whiteboard, below panels, grabs all pointer events */}
 			{isPanMode && (
