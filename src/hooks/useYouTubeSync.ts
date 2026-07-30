@@ -83,6 +83,9 @@ export type SyncMessage =
 	/** Note contents changed. Sent whole rather than as a diff: a note is small,
 	 *  and last-write-wins is the right outcome for two people editing one. */
 	| { type: 'note-update'; id: string; note: NoteContent }
+	/** A canvas bookmark. ALL of x/y/w/h are world-normalised — world pixels
+	 *  divided by the sender's viewport — and the receiver multiplies by its
+	 *  own. Raw world pixels here once sent a peer's viewport off the canvas. */
 	| { type: 'position-tag'; id: string; x: number; y: number; label: string; w?: number; h?: number }
 	| { type: 'position-tag-remove'; id: string }
 	/** A panel was tagged; add a pulsing chip to the peer's dock. `label` is

@@ -347,8 +347,12 @@ export function Session({ roomCode, isHost }: SessionProps) {
 			// The panel is gone, so any local dock chip pointing at it must go too
 			forgetPanel(msg.id);
 		} else if (msg.type === 'position-tag') {
+			// x/y/w/h arrive world-normalised; scale by our own viewport, exactly
+			// as the sender divided by theirs.
 			const tag: PositionTag = {
-				...(msg.w !== undefined && msg.h !== undefined ? { w: msg.w, h: msg.h } : {}),
+				...(msg.w !== undefined && msg.h !== undefined
+					? { w: msg.w * window.innerWidth, h: msg.h * window.innerHeight }
+					: {}),
 				id: msg.id,
 				x: msg.x * window.innerWidth,
 				y: msg.y * window.innerHeight,
@@ -472,7 +476,20 @@ export function Session({ roomCode, isHost }: SessionProps) {
 			};
 			setPositionTags(prev => [...prev, tag]);
 			setDockedIds(prev => (prev.includes(id) ? prev : [...prev, id]));
-			sendSync({ type: 'position-tag', id, x: tag.x, y: tag.y, w: tag.w, h: tag.h, label: tag.label });
+			// Everything travels world-normalised (world pixels ÷ this viewport),
+			// like strokes and the long-press point tag — the receiver scales back
+			// up by its own viewport. `r` is already in those units; `tag` holds
+			// the local world-pixel version, and sending that instead is exactly
+			// the mistake that threw the peer's viewport off the canvas.
+			sendSync({
+				type: 'position-tag',
+				id,
+				x: r.x,
+				y: r.y,
+				w: r.w / window.innerWidth,
+				h: r.h / window.innerHeight,
+				label: tag.label
+			});
 			sendSync({ type: 'dock-tag', id });
 		},
 		[sendSync]
