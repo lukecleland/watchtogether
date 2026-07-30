@@ -54,6 +54,14 @@ interface PositionTag {
 	x: number;
 	y: number;
 	label: string;
+	/**
+	 * Size, in world pixels, when the tag marks an *area* rather than a point.
+	 * A point tag can only take you to a spot; one with bounds can frame what
+	 * it covers and zoom to fit it — which is the only way to bookmark
+	 * handwriting or a drawing, since neither of those is a panel.
+	 */
+	w?: number;
+	h?: number;
 }
 
 // ── Resolution-independent panel sync ────────────────────────────────────
@@ -194,7 +202,7 @@ export function Session({ roomCode, isHost }: SessionProps) {
 
 	// Whiteboard
 	const whiteboardRef = useRef<WhiteboardHandle>(null);
-	const [wbTool, setWbTool] = useState<'pen' | 'eraser' | 'text'>('pen');
+	const [wbTool, setWbTool] = useState<'pen' | 'eraser' | 'text' | 'region'>('pen');
 	const [wbColor, setWbColor] = useState('#ffffff');
 	const [wbWidth, setWbWidth] = useState(3);
 	const [wbNib, setWbNib] = useState<Nib>('ballpoint');
@@ -328,6 +336,7 @@ export function Session({ roomCode, isHost }: SessionProps) {
 			forgetPanel(msg.id);
 		} else if (msg.type === 'position-tag') {
 			const tag: PositionTag = {
+				...(msg.w !== undefined && msg.h !== undefined ? { w: msg.w, h: msg.h } : {}),
 				id: msg.id,
 				x: msg.x * window.innerWidth,
 				y: msg.y * window.innerHeight,
@@ -401,6 +410,27 @@ export function Session({ roomCode, isHost }: SessionProps) {
 	const handleWbTextEdit = useCallback(
 		(id: string, text: string) => {
 			sendSync({ type: 'text-edit', id, text });
+		},
+		[sendSync]
+	);
+
+	// A dragged-out area becomes a tag with bounds, so it can frame what it
+	// covers — the only way to bookmark strokes or text, neither being a panel.
+	const handleWbRegion = useCallback(
+		(r: { x: number; y: number; w: number; h: number }) => {
+			const id = crypto.randomUUID();
+			const tag: PositionTag = {
+				id,
+				x: r.x * window.innerWidth,
+				y: r.y * window.innerHeight,
+				w: r.w,
+				h: r.h,
+				label: `Area ${positionTagsRef.current.length + 1}`
+			};
+			setPositionTags(prev => [...prev, tag]);
+			setDockedIds(prev => (prev.includes(id) ? prev : [...prev, id]));
+			sendSync({ type: 'position-tag', id, x: tag.x, y: tag.y, w: tag.w, h: tag.h, label: tag.label });
+			sendSync({ type: 'dock-tag', id });
 		},
 		[sendSync]
 	);
@@ -484,7 +514,13 @@ export function Session({ roomCode, isHost }: SessionProps) {
 		const isFixed = id === 'local' || id === 'remote';
 		const panel = isFixed ? null : dynamicPanels.find(p => p.id === id);
 		const target = positionTag
-			? { x: positionTag.x, y: positionTag.y, width: 0, height: 0, z: 0 }
+			? {
+					x: positionTag.x,
+					y: positionTag.y,
+					width: positionTag.w ?? 0,
+					height: positionTag.h ?? 0,
+					z: 0
+			  }
 			: isFixed
 				? fixedPanels[id]
 				: panel?.state;
@@ -509,13 +545,21 @@ export function Session({ roomCode, isHost }: SessionProps) {
 
 		// Start from the ideal width, then make sure the whole panel still fits
 		// on screen with a margin, and stay inside the app's zoom limits.
-		const fitScale = positionTag ? canvasStateRef.current.scale : Math.min((vw * 0.9) / target.width, (vh * 0.85) / target.height);
+		const hasBounds = !!positionTag && !!positionTag.w && !!positionTag.h;
+		const fitScale =
+			positionTag && !hasBounds
+				? canvasStateRef.current.scale
+				: Math.min((vw * 0.9) / target.width, (vh * 0.85) / target.height);
 		const idealScale = positionTag ? canvasStateRef.current.scale : IDEAL_ON_SCREEN_WIDTH[type] / target.width;
 		// Position tags are points of interest rather than sizeable panels:
 		// centre the point and zoom closer on every visit.
-		const toScale = positionTag
-			? Math.min(4, Math.max(1.5, canvasStateRef.current.scale * 1.6))
-			: Math.max(0.25, Math.min(4, fitScale, idealScale));
+		const toScale = hasBounds
+			? // An area tag knows its own size, so frame it rather than guessing
+				Math.max(0.25, Math.min(4, fitScale))
+			: positionTag
+				? // A point has no size: creep closer on each visit instead
+					Math.min(4, Math.max(1.5, canvasStateRef.current.scale * 1.6))
+				: Math.max(0.25, Math.min(4, fitScale, idealScale));
 
 		const { x: fromX, y: fromY, scale: fromScale } = canvasStateRef.current;
 		const destX = vw / 2 - (target.x + target.width / 2) * toScale;
@@ -1161,6 +1205,7 @@ export function Session({ roomCode, isHost }: SessionProps) {
 				onStroke={handleWbStroke}
 				onText={handleWbText}
 				onTextEdit={handleWbTextEdit}
+				onRegion={handleWbRegion}
 				canvasTransform={canvas}
 			/>
 
@@ -1211,7 +1256,15 @@ export function Session({ roomCode, isHost }: SessionProps) {
 					// its children. Let those empty areas reach the whiteboard.
 					pointerEvents: 'none'
 				}}>
-				{positionTags.map(tag => (
+				{positionTags.map(tag =>
+					tag.w && tag.h ? (
+						<div
+							key={tag.id}
+							className="absolute z-[5] rounded-md border-2 border-dashed border-amber-400/70 bg-amber-400/5 pointer-events-none"
+							style={{ left: tag.x, top: tag.y, width: tag.w, height: tag.h }}
+							title={customLabels[tag.id] ?? tag.label}
+						/>
+					) : (
 					<div
 						key={tag.id}
 						className="absolute z-[5] -translate-x-1/2 -translate-y-full"
@@ -1225,7 +1278,8 @@ export function Session({ roomCode, isHost }: SessionProps) {
 							<circle cx="12" cy="28" r="1.25" fill="#18181b" />
 						</svg>
 					</div>
-				))}
+					)
+				)}
 				{localStream && localStream.getTracks().length > 0 && (
 					<DraggablePanel state={fixedPanels.local} {...makePanelHandlers('local')} minWidth={200} minHeight={120} scale={canvas.scale} className="z-10">
 						<VideoPanel stream={localStream} label="You" muted docked={dockedIds.includes('local')} onToggleDock={() => toggleDock('local')} />

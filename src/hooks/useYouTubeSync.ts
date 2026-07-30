@@ -83,7 +83,7 @@ export type SyncMessage =
 	/** Note contents changed. Sent whole rather than as a diff: a note is small,
 	 *  and last-write-wins is the right outcome for two people editing one. */
 	| { type: 'note-update'; id: string; note: NoteContent }
-	| { type: 'position-tag'; id: string; x: number; y: number; label: string }
+	| { type: 'position-tag'; id: string; x: number; y: number; label: string; w?: number; h?: number }
 	| { type: 'position-tag-remove'; id: string }
 	/** A panel was tagged; add a pulsing chip to the peer's dock. `label` is
 	 *  sent only when the tagger has given it a custom name — automatic labels
