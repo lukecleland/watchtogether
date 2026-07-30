@@ -42,7 +42,7 @@ import { Dock, type DockEntry } from '../components/Dock';
 import { usePeer } from '../hooks/usePeer';
 import { useYouTubeSync, type SyncMessage } from '../hooks/useYouTubeSync';
 import type { PanelId, PanelState, DynamicPanel, NoteContent } from '../types/panels';
-import { defaultNoteContent } from '../types/panels';
+import { chordsOf, defaultNoteContent } from '../types/panels';
 import { TransferReceiver, base64ToChunk, chunkCount, sendFileInChunks } from '../utils/fileTransfer';
 
 interface SessionProps {
@@ -683,8 +683,14 @@ export function Session({ roomCode, isHost }: SessionProps) {
 		// A note names itself after its contents where it can — the chord name,
 		// or the note's first line — before falling back to a numbered label.
 		if (panel.type === 'note' && panel.note) {
-			const { kind, chord, text } = panel.note;
-			if (kind === 'chord' && chord.name.trim()) return chord.name.trim();
+			const { kind, text } = panel.note;
+			if (kind === 'chord') {
+				const named = chordsOf(panel.note).filter(c => c.name.trim());
+				if (named.length) {
+					const first = named[0].name.trim();
+					return named.length > 1 ? `${first} +${named.length - 1}` : first;
+				}
+			}
 			const firstLine = text.split('\n')[0].trim();
 			if (kind === 'text' && firstLine) return firstLine.slice(0, 40);
 		}
@@ -788,8 +794,8 @@ export function Session({ roomCode, isHost }: SessionProps) {
 		remoteId?: string
 	) => {
 		const { x: tx, y: ty, scale } = canvasStateRef.current;
-		const w = type === 'browser' ? 560 : type === 'youtube' ? 320 : type === 'note' ? 240 : 300;
-		const h = type === 'browser' ? 420 : type === 'youtube' ? 260 : type === 'note' ? 220 : 175;
+		const w = type === 'browser' ? 560 : type === 'youtube' ? 320 : type === 'note' ? 300 : 300;
+		const h = type === 'browser' ? 420 : type === 'youtube' ? 260 : type === 'note' ? 300 : 175;
 		const worldX = (screenX - tx) / scale - w / 2;
 		const worldY = (screenY - ty) / scale - h / 2;
 		const nextZ = ++topZRef.current;
