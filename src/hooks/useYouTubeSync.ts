@@ -56,6 +56,7 @@ export type SyncMessage =
 	 *  and size is a fraction of min(viewportW, viewportH), like stroke width. */
 	| {
 			type: 'draw-text';
+			id: string;
 			x: number;
 			y: number;
 			text: string;
@@ -63,6 +64,8 @@ export type SyncMessage =
 			size: number;
 			font: string;
 	  }
+	/** Text was re-typed. An empty string deletes it. */
+	| { type: 'text-edit'; id: string; text: string }
 	| { type: 'spawn-youtube'; id: string; videoId?: string; state: PanelState }
 	| { type: 'spawn-browser'; id: string; url?: string; state: PanelState }
 	| { type: 'browser-load'; id: string; url: string }

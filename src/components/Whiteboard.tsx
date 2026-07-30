@@ -56,6 +56,8 @@ export type { Nib };
  */
 export interface WhiteboardText {
   kind: "text";
+  /** Stable identity, so an edit can name which piece of text it means. */
+  id: string;
   x: number; // normalised 0–1, left edge
   y: number; // normalised 0–1, baseline
   text: string;
@@ -75,6 +77,7 @@ function isText(i: CanvasItem): i is WhiteboardText {
 export interface WhiteboardHandle {
   drawStroke(stroke: WhiteboardStroke): void;
   drawText(item: WhiteboardText): void;
+  editText(id: string, text: string): void;
   clearCanvas(): void;
 }
 
@@ -87,6 +90,7 @@ interface WhiteboardProps {
   textSize: number; // raw pixel size
   onStroke: (stroke: WhiteboardStroke) => void;
   onText: (item: WhiteboardText) => void;
+  onTextEdit: (id: string, text: string) => void;
   canvasTransform: { x: number; y: number; scale: number };
 }
 
@@ -119,7 +123,18 @@ function rngFrom(seed: number): () => number {
 
 const Whiteboard = forwardRef<WhiteboardHandle, WhiteboardProps>(
   (
-    { tool, color, width, nib, font, textSize, onStroke, onText, canvasTransform },
+    {
+      tool,
+      color,
+      width,
+      nib,
+      font,
+      textSize,
+      onStroke,
+      onText,
+      onTextEdit,
+      canvasTransform
+    },
     ref
   ) => {
     const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -130,8 +145,10 @@ const Whiteboard = forwardRef<WhiteboardHandle, WhiteboardProps>(
     // whatever came before them.
     const strokesRef = useRef<CanvasItem[]>([]);
     // Where a text caret is currently open, in screen coordinates
-    const [editing, setEditing] = useState<{ sx: number; sy: number } | null>(null);
-    const editingRef = useRef<{ sx: number; sy: number } | null>(null);
+    // An open caret. `id` is set when editing existing text rather than placing new.
+    type Caret = { sx: number; sy: number; value: string; id?: string };
+    const [editing, setEditing] = useState<Caret | null>(null);
+    const editingRef = useRef<Caret | null>(null);
     const editRef = useRef<HTMLInputElement>(null);
     // Rolling state for the fountain nib's speed-driven taper
     const fountainRef = useRef({ w: 1, at: 0 });
@@ -316,7 +333,11 @@ const Whiteboard = forwardRef<WhiteboardHandle, WhiteboardProps>(
       const ctx = canvas?.getContext("2d");
       if (!ctx || !canvas) return;
       ctx.clearRect(0, 0, canvas.width, canvas.height);
-      for (const item of strokesRef.current) drawItem(item);
+      for (const item of strokesRef.current) {
+        // The piece being edited is hidden until its replacement is committed
+        if (isText(item) && item.id === editingRef.current?.id) continue;
+        drawItem(item);
+      }
     }, [drawItem]);
 
     // Size the canvas to physical pixels so it stays sharp on high-DPR screens.
@@ -356,6 +377,13 @@ const Whiteboard = forwardRef<WhiteboardHandle, WhiteboardProps>(
           strokesRef.current.push(item);
           drawTextItem(item);
         },
+        editText(id: string, text: string) {
+          const idx = strokesRef.current.findIndex(i => isText(i) && i.id === id);
+          if (idx === -1) return;
+          if (!text) strokesRef.current.splice(idx, 1);
+          else strokesRef.current[idx] = { ...(strokesRef.current[idx] as WhiteboardText), text };
+          redrawAll();
+        },
         clearCanvas() {
           strokesRef.current = [];
           const canvas = canvasRef.current;
@@ -364,7 +392,7 @@ const Whiteboard = forwardRef<WhiteboardHandle, WhiteboardProps>(
           if (ctx) ctx.clearRect(0, 0, canvas.width, canvas.height);
         },
       }),
-      [drawSegment, drawTextItem],
+      [drawSegment, drawTextItem, redrawAll],
     );
 
     // Convert screen position to world-normalised coords (factors out zoom+pan)
@@ -382,6 +410,38 @@ const Whiteboard = forwardRef<WhiteboardHandle, WhiteboardProps>(
     // canvas stops receiving movement as soon as the cursor crosses a video
     // or another floating panel, which leaves a gap in the stroke.
 
+    /**
+     * Topmost piece of text under a screen point, or null.
+     *
+     * Measured in world pixels rather than screen pixels so the answer doesn't
+     * depend on the current zoom. Searched newest-first, so the one you can
+     * actually see on top is the one you get.
+     */
+    const textAt = (clientX: number, clientY: number): WhiteboardText | null => {
+      const ctx = canvasRef.current?.getContext("2d");
+      if (!ctx) return null;
+      const vw = window.innerWidth;
+      const vh = window.innerHeight;
+      const pos = getPosFromClient(clientX, clientY);
+      const px = pos.x * vw;
+      const py = pos.y * vh;
+
+      for (let i = strokesRef.current.length - 1; i >= 0; i--) {
+        const item = strokesRef.current[i];
+        if (!isText(item)) continue;
+        const sizePx = item.size * Math.min(vw, vh);
+        ctx.font = `${sizePx}px ${FONT_STACKS[item.font] ?? FONT_STACKS.sans}`;
+        const w = ctx.measureText(item.text).width;
+        const x0 = item.x * vw;
+        const y0 = item.y * vh;
+        // Baseline sits at y0; allow a little below it for descenders
+        if (px >= x0 && px <= x0 + w && py >= y0 - sizePx && py <= y0 + sizePx * 0.3) {
+          return item;
+        }
+      }
+      return null;
+    };
+
     // Commit whatever is in the caret, if anything, and close it
     const commitText = () => {
       const el = editRef.current;
@@ -390,10 +450,24 @@ const Whiteboard = forwardRef<WhiteboardHandle, WhiteboardProps>(
       editingRef.current = null;
       if (!el || !at) return;
       const value = el.value.trim();
+
+      // Editing existing text: replace it where it sits in the list, so an
+      // eraser drawn after it still covers it. An empty box deletes it.
+      if (at.id) {
+        const idx = strokesRef.current.findIndex(i => isText(i) && i.id === at.id);
+        if (idx === -1) return;
+        if (!value) strokesRef.current.splice(idx, 1);
+        else strokesRef.current[idx] = { ...(strokesRef.current[idx] as WhiteboardText), text: value };
+        redrawAll();
+        onTextEdit(at.id, value);
+        return;
+      }
+
       if (!value) return;
       const pos = getPosFromClient(at.sx, at.sy);
       const item: WhiteboardText = {
         kind: "text",
+        id: crypto.randomUUID(),
         x: pos.x,
         y: pos.y,
         text: value,
@@ -409,8 +483,27 @@ const Whiteboard = forwardRef<WhiteboardHandle, WhiteboardProps>(
     const openCaret = (sx: number, sy: number) => {
       // A click elsewhere while typing commits the first, then opens a new one
       if (editingRef.current) commitText();
-      editingRef.current = { sx, sy };
-      setEditing({ sx, sy });
+
+      const hit = textAt(sx, sy);
+      if (hit) {
+        // Re-open existing text where it actually sits, not where you clicked
+        const { x: tx, y: ty, scale } = canvasTransformRef.current;
+        const next: Caret = {
+          sx: hit.x * window.innerWidth * scale + tx,
+          sy: hit.y * window.innerHeight * scale + ty,
+          value: hit.text,
+          id: hit.id
+        };
+        editingRef.current = next;
+        setEditing(next);
+        // Hide the original while its replacement is being typed
+        redrawAll();
+        return;
+      }
+
+      const next: Caret = { sx, sy, value: "" };
+      editingRef.current = next;
+      setEditing(next);
     };
 
     const handlePointerDown = (e: React.PointerEvent<HTMLCanvasElement>) => {
@@ -550,16 +643,24 @@ const Whiteboard = forwardRef<WhiteboardHandle, WhiteboardProps>(
         */}
         {editing && (
           <input
+            // Remount per caret so the box always starts from the right text
+            key={editing.id ?? `${editing.sx},${editing.sy}`}
             ref={editRef}
             autoFocus
+            defaultValue={editing.value}
             spellCheck={false}
-            aria-label="Canvas text"
+            aria-label={editing.id ? "Edit canvas text" : "Canvas text"}
             onBlur={commitText}
             onKeyDown={e => {
               if (e.key === "Enter") commitText();
               if (e.key === "Escape") {
+                const wasEditing = !!editingRef.current?.id;
                 setEditing(null);
                 editingRef.current = null;
+                // Abandoning an edit has to repaint: the original is hidden
+                // while its replacement is being typed, so without this it
+                // simply stays gone.
+                if (wasEditing) redrawAll();
               }
               // The canvas binds space to pan mode
               e.stopPropagation();

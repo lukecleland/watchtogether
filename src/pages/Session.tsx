@@ -362,7 +362,9 @@ export function Session({ roomCode, isHost }: SessionProps) {
 		} else if (msg.type === 'draw') {
 			whiteboardRef.current?.drawStroke(msg);
 		} else if (msg.type === 'draw-text') {
-			whiteboardRef.current?.drawText({ ...msg, kind: 'text', font: msg.font as TextFont });
+			whiteboardRef.current?.drawText({ ...msg, kind: 'text', id: msg.id, font: msg.font as TextFont });
+		} else if (msg.type === 'text-edit') {
+			whiteboardRef.current?.editText(msg.id, msg.text);
 		} else if (msg.type === 'draw-clear') {
 			whiteboardRef.current?.clearCanvas();
 		}
@@ -391,7 +393,14 @@ export function Session({ roomCode, isHost }: SessionProps) {
 
 	const handleWbText = useCallback(
 		(item: WhiteboardText) => {
-			sendSync({ type: 'draw-text', x: item.x, y: item.y, text: item.text, color: item.color, size: item.size, font: item.font });
+			sendSync({ type: 'draw-text', id: item.id, x: item.x, y: item.y, text: item.text, color: item.color, size: item.size, font: item.font });
+		},
+		[sendSync]
+	);
+
+	const handleWbTextEdit = useCallback(
+		(id: string, text: string) => {
+			sendSync({ type: 'text-edit', id, text });
 		},
 		[sendSync]
 	);
@@ -1151,6 +1160,7 @@ export function Session({ roomCode, isHost }: SessionProps) {
 				textSize={wbTextSize}
 				onStroke={handleWbStroke}
 				onText={handleWbText}
+				onTextEdit={handleWbTextEdit}
 				canvasTransform={canvas}
 			/>
 
