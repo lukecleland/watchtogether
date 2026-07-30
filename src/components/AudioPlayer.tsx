@@ -247,16 +247,18 @@ export function AudioPlayer({
       {/* Header / drag handle */}
       <div className="drag-handle flex items-center justify-between px-3 py-2 bg-zinc-800 cursor-grab active:cursor-grabbing select-none shrink-0">
         <div className="flex items-center gap-2">
-          {/* Music note icon */}
           <svg
             className="w-4 h-4 text-violet-400"
             viewBox="0 0 24 24"
-            fill="currentColor"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth={2}
           >
-            <path d="M12 3v10.55A4 4 0 1014 17V7h4V3h-6z" />
+            <circle cx="12" cy="12" r="8" />
+            <circle cx="12" cy="12" r="2" />
           </svg>
           <span className="text-xs font-semibold text-zinc-300">
-            Audio Player
+            Record Player
           </span>
         </div>
         <div className="flex items-center gap-1">
@@ -377,6 +379,60 @@ export function AudioPlayer({
           ) : (
             /* ── Player controls ── */
             <>
+              {/* Top-down turntable deck */}
+              <div className="relative flex-1 min-h-[180px] overflow-hidden rounded-xl border border-amber-950/70 bg-[linear-gradient(135deg,#8a5839,#c18a5d_48%,#74462f)] shadow-[inset_0_1px_0_rgba(255,255,255,0.16),inset_0_-10px_25px_rgba(35,16,8,0.28)]">
+                {/* Platter */}
+                <div className="absolute left-3 top-1/2 h-[calc(100%-1.5rem)] max-h-[240px] aspect-square -translate-y-1/2 rounded-full bg-zinc-700 p-[5px] shadow-[0_8px_18px_rgba(0,0,0,0.45),inset_0_0_0_2px_rgba(255,255,255,0.08)]">
+                  <div
+                    className="record-vinyl relative h-full w-full rounded-full overflow-hidden shadow-[inset_0_0_16px_rgba(255,255,255,0.08)]"
+                    style={{ animationPlayState: isPlaying ? "running" : "paused" }}
+                  >
+                    <div className="absolute inset-[9%] rounded-full border border-zinc-700/80" />
+                    <div className="absolute inset-[18%] rounded-full border border-zinc-700/70" />
+                    <div className="absolute inset-[27%] rounded-full border border-zinc-700/60" />
+                    <div className="absolute inset-[34%] rounded-full bg-violet-600 border-2 border-violet-300/30 shadow-inner">
+                      <div className="absolute inset-[44%] rounded-full bg-zinc-100 shadow" />
+                      <span className="absolute inset-x-1 top-1/2 -translate-y-1/2 text-[7px] leading-none text-center text-violet-100 font-semibold truncate">
+                        {fileName}
+                      </span>
+                    </div>
+                    <div className="absolute inset-0 rounded-full bg-[linear-gradient(115deg,transparent_42%,rgba(255,255,255,0.11)_49%,transparent_56%)]" />
+                  </div>
+                </div>
+
+                {/* Tonearm assembly */}
+                <div className="absolute right-4 top-4 h-9 w-9 rounded-full bg-zinc-300 border-[5px] border-zinc-600 shadow-[0_3px_8px_rgba(0,0,0,0.45)]">
+                  <div
+                    className="absolute left-1/2 top-1/2 h-[125px] w-2 origin-top -translate-x-1/2 rounded-full bg-gradient-to-r from-zinc-500 via-zinc-100 to-zinc-500 shadow-md transition-transform duration-700 ease-out"
+                    style={{ transform: `translateX(-50%) rotate(${38 - progress * 0.18}deg)` }}
+                  >
+                    <div className="absolute -bottom-3 left-1/2 h-5 w-3 -translate-x-1/2 rounded-sm bg-zinc-800 shadow" />
+                  </div>
+                </div>
+
+                {/* Deck controls */}
+                <button
+                  onClick={togglePlay}
+                  className={`absolute bottom-3 right-3 flex h-10 w-10 items-center justify-center rounded-full border shadow-lg transition-colors ${
+                    isPlaying
+                      ? "bg-violet-600 border-violet-300 text-white"
+                      : "bg-zinc-800 border-zinc-500 text-zinc-200 hover:bg-zinc-700"
+                  }`}
+                  aria-label={isPlaying ? "Pause" : "Play"}
+                >
+                  {isPlaying ? (
+                    <svg className="h-4 w-4" viewBox="0 0 24 24" fill="currentColor">
+                      <path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z" />
+                    </svg>
+                  ) : (
+                    <svg className="h-4 w-4 translate-x-px" viewBox="0 0 24 24" fill="currentColor">
+                      <path d="M8 5v14l11-7z" />
+                    </svg>
+                  )}
+                </button>
+                <div className={`absolute right-5 bottom-16 h-2 w-2 rounded-full transition-colors ${isPlaying ? "bg-emerald-400 shadow-[0_0_8px_#34d399]" : "bg-red-950"}`} />
+              </div>
+
               {/* Track name + swap file button */}
               <div className="flex items-center gap-1 min-w-0">
                 <p
@@ -440,33 +496,8 @@ export function AudioPlayer({
                 </span>
               </div>
 
-              {/* Play / pause + volume */}
+              {/* Volume */}
               <div className="flex items-center gap-3">
-                <button
-                  onClick={togglePlay}
-                  className="flex items-center justify-center w-8 h-8 rounded-full bg-violet-600 hover:bg-violet-500 transition-colors shrink-0"
-                  aria-label={isPlaying ? "Pause" : "Play"}
-                >
-                  {isPlaying ? (
-                    <svg
-                      className="w-4 h-4 text-white"
-                      fill="currentColor"
-                      viewBox="0 0 24 24"
-                    >
-                      <path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z" />
-                    </svg>
-                  ) : (
-                    <svg
-                      className="w-4 h-4 text-white"
-                      fill="currentColor"
-                      viewBox="0 0 24 24"
-                    >
-                      <path d="M8 5v14l11-7z" />
-                    </svg>
-                  )}
-                </button>
-
-                {/* Volume */}
                 <div className="flex items-center gap-1.5 flex-1 min-w-0">
                   <svg
                     className="w-3.5 h-3.5 text-zinc-500 shrink-0"
