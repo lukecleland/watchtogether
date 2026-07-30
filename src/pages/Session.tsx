@@ -348,6 +348,12 @@ export function Session({ roomCode, isHost }: SessionProps) {
 			// correct one for whichever side is looking.
 			if (msg.label) setCustomLabels(prev => ({ ...prev, [id]: msg.label as string }));
 			startPulse(id);
+		} else if (msg.type === 'dock-ping') {
+			const id = swapFixedId(msg.id);
+			// A ping is an explicit "look here", so it re-adds a bookmark the
+			// receiver had dismissed rather than failing silently on their side.
+			setDockedIds(prev => (prev.includes(id) ? prev : [...prev, id]));
+			startPulse(id);
 		} else if (msg.type === 'dock-rename') {
 			const id = swapFixedId(msg.id);
 			setCustomLabels(prev => {
@@ -596,6 +602,10 @@ export function Session({ roomCode, isHost }: SessionProps) {
 			}
 		];
 	});
+
+	const pingDockEntry = (id: string) => {
+		sendSync({ type: 'dock-ping', id });
+	};
 
 	// Empty string clears the custom name and reverts to the automatic label.
 	// Shared, since these are bookmarks in a canvas both people are looking at.
@@ -1291,7 +1301,7 @@ export function Session({ roomCode, isHost }: SessionProps) {
 			</div>
 
 			{/* Dock — fixed overlay above the canvas; shortcuts back to docked panels */}
-			<Dock entries={dockEntries} onJump={jumpToPanel} onRemove={removeDockEntry} onRename={renameDockEntry} />
+			<Dock entries={dockEntries} onJump={jumpToPanel} onRemove={removeDockEntry} onRename={renameDockEntry} onPing={pingDockEntry} />
 		</div>
 	);
 }

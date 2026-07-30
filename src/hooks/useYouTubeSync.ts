@@ -91,7 +91,11 @@ export type SyncMessage =
 	| { type: 'dock-tag'; id: string; label?: string }
 	/** Renamed a bookmark. An empty `label` clears the custom name. Never adds a
 	 *  chip, so a rename can't resurrect one the peer has dismissed. */
-	| { type: 'dock-rename'; id: string; label: string };
+	| { type: 'dock-rename'; id: string; label: string }
+	/** "Look at this one, now." Pulses the named bookmark on the peer's dock,
+	 *  and re-adds it if they had dismissed it — a ping is an explicit nudge,
+	 *  so silently doing nothing would be worse than the small intrusion. */
+	| { type: 'dock-ping'; id: string };
 
 interface UseYouTubeSyncOptions {
 	dataConnection: DataConnection | null;

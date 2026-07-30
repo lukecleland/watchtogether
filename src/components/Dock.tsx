@@ -51,6 +51,8 @@ interface DockProps {
   onRemove: (id: string) => void;
   /** Set a custom label; an empty string reverts to the automatic label. */
   onRename: (id: string, label: string) => void;
+  /** Nudge the other person to look at this one. */
+  onPing: (id: string) => void;
 }
 
 function DockIcon({ type }: { type: DockEntry["type"] }) {
@@ -168,7 +170,24 @@ export function DockButton({
   );
 }
 
-export function Dock({ entries, onJump, onRemove, onRename }: DockProps) {
+export function Dock({ entries, onJump, onRemove, onRename, onPing }: DockProps) {
+  // Chips that have just been pinged, so the sender gets confirmation it went
+  const [pinged, setPinged] = useState<string[]>([]);
+  const pingTimers = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
+  useEffect(() => {
+    const timers = pingTimers.current;
+    return () => Object.values(timers).forEach(clearTimeout);
+  }, []);
+
+  const ping = (id: string) => {
+    onPing(id);
+    setPinged(p => (p.includes(id) ? p : [...p, id]));
+    if (pingTimers.current[id]) clearTimeout(pingTimers.current[id]);
+    pingTimers.current[id] = setTimeout(() => {
+      setPinged(p => p.filter(x => x !== id));
+      delete pingTimers.current[id];
+    }, 1400);
+  };
   // id of the chip currently being renamed, plus its in-progress text
   const [editingId, setEditingId] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
@@ -249,6 +268,29 @@ export function Dock({ entries, onJump, onRemove, onRename }: DockProps) {
               <span className="text-xs font-medium text-zinc-300 truncate max-w-[10rem]">
                 {entry.label}
               </span>
+            </button>
+
+            <button
+              onClick={() => ping(entry.id)}
+              className={`shrink-0 transition-colors ${
+                pinged.includes(entry.id)
+                  ? "text-violet-300"
+                  : "text-zinc-500 hover:text-violet-400"
+              }`}
+              title={`Ping — make ${entry.label} flash on their screen`}
+              aria-label={`Ping ${entry.label}`}
+            >
+              <svg
+                className="w-3.5 h-3.5"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth={2}
+                viewBox="0 0 24 24"
+              >
+                <path strokeLinecap="round" d="M4.9 19.1a10 10 0 010-14.2M19.1 4.9a10 10 0 010 14.2" />
+                <path strokeLinecap="round" d="M8.4 15.6a5 5 0 010-7.2M15.6 8.4a5 5 0 010 7.2" />
+                <circle cx="12" cy="12" r="1.6" fill="currentColor" stroke="none" />
+              </svg>
             </button>
 
             <button
