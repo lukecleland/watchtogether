@@ -14,8 +14,9 @@ import { useState, useEffect, useCallback, useRef } from 'react';
  *   panels land proportionally on different-resolution screens
  * - Renders the full-screen whiteboard canvas (z=0), the whiteboard toolbar,
  *   and the three floating DraggablePanels (local video, remote video, YouTube)
- * - Owns the dock (`dockedIds`): per-user shortcuts that fly the viewport back
- *   to a panel out on the canvas. Not synced — see the Dock component.
+ * - Owns the dock (`dockedIds`): shared bookmarks that fly the viewport back to
+ *   a panel out on the canvas. Tagging and renaming are sent to the peer;
+ *   dismissing is local. See the Dock component.
  *
  * ## Panel perspective swap
  * When a `panel-update` arrives for `"local"`, it is applied to `"remote"` and
@@ -99,6 +100,15 @@ function defaultFixedPanels(): Record<PanelId, PanelState> {
 	};
 }
 
+// The two fixed video panels are mirrored between peers: whoever sends "local"
+// means the panel the *receiver* sees as "remote". Dynamic panel ids are shared
+// verbatim and pass straight through.
+function swapFixedId(id: string): string {
+	if (id === 'local') return 'remote';
+	if (id === 'remote') return 'local';
+	return id;
+}
+
 // Shared YouTube URL parser (used for background URL drops)
 function parseYouTubeVideoId(input: string): string | null {
 	try {
@@ -143,14 +153,21 @@ export function Session({ roomCode, isHost }: SessionProps) {
 	const panStartRef = useRef({ mx: 0, my: 0, cx: 0, cy: 0 });
 
 	// ── Dock ─────────────────────────────────────────────────────────────────
-	// Panel ids with a shortcut in the dock, in the order they were added.
-	// Deliberately NOT synced — which panels you keep to hand is a personal
-	// view preference, so the peer's dock is independent of yours.
+	// Panel ids bookmarked in the dock, in the order they were added. Tagging
+	// and renaming are shared with the peer (see `dock-tag` / `dock-rename`);
+	// dismissing is local, so neither person can clear the other's bar.
 	const [dockedIds, setDockedIds] = useState<string[]>([]);
+	// Bookmarks the peer tagged that we haven't acknowledged yet — these pulse.
+	const [pulsingIds, setPulsingIds] = useState<string[]>([]);
+	// Pulse timers, so they can be cleared on acknowledge / unmount
+	const pulseTimersRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
 	// Self-describing label per panel id, used for its dock chip: the YouTube
 	// video's title or the audio file's name. Panels report these upward once
 	// their content is known, so two YouTube chips aren't indistinguishable.
 	const [panelLabels, setPanelLabels] = useState<Record<string, string>>({});
+	// User-set chip names. Take precedence over the derived label above, and
+	// survive the underlying content changing — if you named it, you meant it.
+	const [customLabels, setCustomLabels] = useState<Record<string, string>>({});
 	// In-flight "fly to panel" animation, so a second jump cancels the first
 	const jumpAnimRef = useRef<number | null>(null);
 
@@ -166,6 +183,27 @@ export function Session({ roomCode, isHost }: SessionProps) {
 		localStream
 	});
 
+	// Stop a chip pulsing — it's been seen
+	const acknowledgePulse = useCallback((id: string) => {
+		const timer = pulseTimersRef.current[id];
+		if (timer) {
+			clearTimeout(timer);
+			delete pulseTimersRef.current[id];
+		}
+		setPulsingIds(prev => (prev.includes(id) ? prev.filter(p => p !== id) : prev));
+	}, []);
+
+	// Start a chip pulsing, and stop it on its own after a while so a bookmark
+	// nobody clicks doesn't pulse for the rest of the session.
+	const startPulse = useCallback(
+		(id: string) => {
+			setPulsingIds(prev => (prev.includes(id) ? prev : [...prev, id]));
+			if (pulseTimersRef.current[id]) clearTimeout(pulseTimersRef.current[id]);
+			pulseTimersRef.current[id] = setTimeout(() => acknowledgePulse(id), 10000);
+		},
+		[acknowledgePulse]
+	);
+
 	// Drop any dock chip / cached label belonging to a panel that no longer exists
 	const forgetPanel = useCallback((id: string) => {
 		setDockedIds(prev => (prev.includes(id) ? prev.filter(d => d !== id) : prev));
@@ -175,7 +213,14 @@ export function Session({ roomCode, isHost }: SessionProps) {
 			delete next[id];
 			return next;
 		});
-	}, []);
+		setCustomLabels(prev => {
+			if (!(id in prev)) return prev;
+			const next = { ...prev };
+			delete next[id];
+			return next;
+		});
+		acknowledgePulse(id);
+	}, [acknowledgePulse]);
 
 	// Panel sync — wired to the same data channel as YouTube sync
 	const handleRemoteSync = useCallback((msg: SyncMessage) => {
@@ -222,12 +267,32 @@ export function Session({ roomCode, isHost }: SessionProps) {
 			setDynamicPanels(prev => prev.filter(p => p.id !== msg.id));
 			// The panel is gone, so any local dock chip pointing at it must go too
 			forgetPanel(msg.id);
+		} else if (msg.type === 'dock-tag') {
+			// Same perspective swap as panel-update: their "You" is our "Guest"
+			const id = swapFixedId(msg.id);
+			setDockedIds(prev => (prev.includes(id) ? prev : [...prev, id]));
+			// Only custom names travel; automatic labels are derived identically
+			// on both sides, and for video panels the derived name is the
+			// correct one for whichever side is looking.
+			if (msg.label) setCustomLabels(prev => ({ ...prev, [id]: msg.label as string }));
+			startPulse(id);
+		} else if (msg.type === 'dock-rename') {
+			const id = swapFixedId(msg.id);
+			setCustomLabels(prev => {
+				if (!msg.label) {
+					if (!(id in prev)) return prev;
+					const next = { ...prev };
+					delete next[id];
+					return next;
+				}
+				return { ...prev, [id]: msg.label };
+			});
 		} else if (msg.type === 'draw') {
 			whiteboardRef.current?.drawStroke(msg);
 		} else if (msg.type === 'draw-clear') {
 			whiteboardRef.current?.clearCanvas();
 		}
-	}, [forgetPanel]);
+	}, [forgetPanel, startPulse]);
 
 	// We use useYouTubeSync here to route panel-update and whiteboard messages.
 	// YoutubeWidget mounts its own useYouTubeSync instance for YT playback messages.
@@ -288,24 +353,59 @@ export function Session({ roomCode, isHost }: SessionProps) {
 		sendSync({ type: 'remove-panel', id });
 	};
 
+	// Tagging is shared; untagging is not. Removing a chip clears it from your
+	// own bar only — nobody gets to delete a bookmark out of the other's UI.
 	const toggleDock = (id: string) => {
-		setDockedIds(prev => (prev.includes(id) ? prev.filter(d => d !== id) : [...prev, id]));
+		// The send stays outside the state updater — StrictMode invokes updaters
+		// twice, which would tag the peer twice.
+		if (dockedIds.includes(id)) {
+			acknowledgePulse(id);
+			setDockedIds(prev => prev.filter(d => d !== id));
+			return;
+		}
+		sendSync({ type: 'dock-tag', id, ...(customLabels[id] ? { label: customLabels[id] } : {}) });
+		setDockedIds(prev => (prev.includes(id) ? prev : [...prev, id]));
 	};
 
-	// Fly the viewport so the given panel sits in the middle of the screen.
-	// The panel itself never moves — the dock is navigation, not relocation.
-	// Zoom is left alone: the jump respects whatever scale the user chose.
+	// Fly the viewport so the given panel sits in the middle of the screen at a
+	// size that's actually usable for its content. The panel itself never moves
+	// — the dock is navigation, not relocation; only the viewport changes.
 	const jumpToPanel = (id: string) => {
-		const target = id === 'local' || id === 'remote' ? fixedPanels[id] : dynamicPanels.find(p => p.id === id)?.state;
+		// Going there counts as seeing it
+		acknowledgePulse(id);
+		const isFixed = id === 'local' || id === 'remote';
+		const panel = isFixed ? null : dynamicPanels.find(p => p.id === id);
+		const target = isFixed ? fixedPanels[id] : panel?.state;
 		if (!target) return;
 
-		const { x: fromX, y: fromY, scale } = canvasStateRef.current;
-		const destX = window.innerWidth / 2 - (target.x + target.width / 2) * scale;
-		const destY = window.innerHeight / 2 - (target.y + target.height / 2) * scale;
+		const type: DockEntry['type'] = isFixed ? id : (panel?.type ?? 'youtube');
+		const vw = window.innerWidth;
+		const vh = window.innerHeight;
+
+		// How wide the panel should appear on screen, by content type. A video
+		// needs real estate to be watchable; an audio player would look absurd
+		// blown up to fill the viewport.
+		const IDEAL_ON_SCREEN_WIDTH: Record<DockEntry['type'], number> = {
+			youtube: 720,
+			local: 480,
+			remote: 480,
+			audio: 360
+		};
+
+		// Start from the ideal width, then make sure the whole panel still fits
+		// on screen with a margin, and stay inside the app's zoom limits.
+		const fitScale = Math.min((vw * 0.9) / target.width, (vh * 0.85) / target.height);
+		const idealScale = IDEAL_ON_SCREEN_WIDTH[type] / target.width;
+		const toScale = Math.max(0.25, Math.min(4, fitScale, idealScale));
+
+		const { x: fromX, y: fromY, scale: fromScale } = canvasStateRef.current;
+		const destX = vw / 2 - (target.x + target.width / 2) * toScale;
+		const destY = vh / 2 - (target.y + target.height / 2) * toScale;
 		const dx = destX - fromX;
 		const dy = destY - fromY;
-		// Already centred — nothing to animate
-		if (Math.abs(dx) < 1 && Math.abs(dy) < 1) return;
+		const dScale = toScale - fromScale;
+		// Already framed — nothing to animate
+		if (Math.abs(dx) < 1 && Math.abs(dy) < 1 && Math.abs(dScale) < 0.01) return;
 
 		if (jumpAnimRef.current !== null) cancelAnimationFrame(jumpAnimRef.current);
 
@@ -314,17 +414,22 @@ export function Session({ roomCode, isHost }: SessionProps) {
 		const step = (now: number) => {
 			const t = Math.min(1, (now - startedAt) / DURATION);
 			const eased = 1 - Math.pow(1 - t, 3); // easeOutCubic
-			// Spread onto prev so a mid-flight zoom (wheel / pinch) isn't clobbered
-			setCanvas(prev => ({ ...prev, x: fromX + dx * eased, y: fromY + dy * eased }));
+			setCanvas({
+				x: fromX + dx * eased,
+				y: fromY + dy * eased,
+				scale: fromScale + dScale * eased
+			});
 			jumpAnimRef.current = t < 1 ? requestAnimationFrame(step) : null;
 		};
 		jumpAnimRef.current = requestAnimationFrame(step);
 	};
 
-	// Cancel any in-flight jump on unmount
+	// Cancel any in-flight jump and pending pulse timers on unmount
 	useEffect(() => {
+		const pulseTimers = pulseTimersRef.current;
 		return () => {
 			if (jumpAnimRef.current !== null) cancelAnimationFrame(jumpAnimRef.current);
+			Object.values(pulseTimers).forEach(clearTimeout);
 		};
 	}, []);
 
@@ -338,13 +443,41 @@ export function Session({ roomCode, isHost }: SessionProps) {
 		return `${base} ${sameType.findIndex(p => p.id === panel.id) + 1}`;
 	};
 
+	// Label precedence: user-set name → derived from content → typed fallback
 	const dockEntries: DockEntry[] = dockedIds.flatMap((id): DockEntry[] => {
-		if (id === 'local') return [{ id, type: 'local', label: 'You' }];
-		if (id === 'remote') return [{ id, type: 'remote', label: 'Guest' }];
+		const custom = customLabels[id];
+		const pulsing = pulsingIds.includes(id);
+		if (id === 'local' || id === 'remote') {
+			const auto = id === 'local' ? 'You' : 'Guest';
+			return [{ id, type: id, label: custom ?? auto, renamed: !!custom, pulsing }];
+		}
 		const panel = dynamicPanels.find(p => p.id === id);
 		if (!panel) return [];
-		return [{ id, type: panel.type, label: panelLabels[id] ?? fallbackLabel(panel) }];
+		return [
+			{
+				id,
+				type: panel.type,
+				label: custom ?? panelLabels[id] ?? fallbackLabel(panel),
+				renamed: !!custom,
+				pulsing
+			}
+		];
 	});
+
+	// Empty string clears the custom name and reverts to the automatic label.
+	// Shared, since these are bookmarks in a canvas both people are looking at.
+	const renameDockEntry = (id: string, label: string) => {
+		sendSync({ type: 'dock-rename', id, label });
+		setCustomLabels(prev => {
+			if (!label) {
+				if (!(id in prev)) return prev;
+				const next = { ...prev };
+				delete next[id];
+				return next;
+			}
+			return { ...prev, [id]: label };
+		});
+	};
 
 	// Compute spatial volume (0–1) for an audio panel.
 	//
@@ -880,7 +1013,7 @@ export function Session({ roomCode, isHost }: SessionProps) {
 			</div>
 
 			{/* Dock — fixed overlay above the canvas; shortcuts back to docked panels */}
-			<Dock entries={dockEntries} onJump={jumpToPanel} onRemove={toggleDock} />
+			<Dock entries={dockEntries} onJump={jumpToPanel} onRemove={toggleDock} onRename={renameDockEntry} />
 		</div>
 	);
 }

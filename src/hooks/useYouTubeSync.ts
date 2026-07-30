@@ -26,6 +26,12 @@ import type { PanelState } from '../types/panels';
  * - `draw` — a single whiteboard stroke segment; x/y are viewport fractions, width is a
  *   fraction of Math.min(viewportW, viewportH) for DPR-independent sizing
  * - `draw-clear` — clears the whiteboard canvas for both peers
+ * - `dock-tag` / `dock-rename` — shared bookmarks. Tagging a panel puts a chip
+ *   in the *other* peer's dock too (pulsing, so they notice); renaming updates
+ *   it on both sides. Dismissing is deliberately local and sends nothing, so
+ *   neither person can remove a bookmark from the other's bar. For the two
+ *   fixed video panels the id is swapped on receipt, exactly as `panel-update`
+ *   does — your "You" is their "Guest".
  */
 export type SyncMessage =
 	| { type: 'load'; videoId: string }
@@ -55,7 +61,14 @@ export type SyncMessage =
 			mimeType?: string;
 			dataB64?: string;
 	  }
-	| { type: 'remove-panel'; id: string };
+	| { type: 'remove-panel'; id: string }
+	/** A panel was tagged; add a pulsing chip to the peer's dock. `label` is
+	 *  sent only when the tagger has given it a custom name — automatic labels
+	 *  (video title, file name, numbering) are derived identically on both sides. */
+	| { type: 'dock-tag'; id: string; label?: string }
+	/** Renamed a bookmark. An empty `label` clears the custom name. Never adds a
+	 *  chip, so a rename can't resurrect one the peer has dismissed. */
+	| { type: 'dock-rename'; id: string; label: string };
 
 interface UseYouTubeSyncOptions {
 	dataConnection: DataConnection | null;
