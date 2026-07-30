@@ -851,7 +851,7 @@ export function Session({ roomCode, isHost }: SessionProps) {
 	) => {
 		const { x: tx, y: ty, scale } = canvasStateRef.current;
 		const w = type === 'browser' ? 560 : type === 'youtube' ? 320 : type === 'note' ? 300 : 300;
-		const h = type === 'browser' ? 420 : type === 'youtube' ? 260 : type === 'note' ? 300 : 175;
+		const h = type === 'browser' ? 420 : type === 'youtube' ? 260 : type === 'note' ? 300 : 360;
 		const worldX = (screenX - tx) / scale - w / 2;
 		const worldY = (screenY - ty) / scale - h / 2;
 		const nextZ = ++topZRef.current;
@@ -1501,7 +1501,7 @@ export function Session({ roomCode, isHost }: SessionProps) {
 						{...makeDynamicPanelHandlers(panel.id)}
 						onToggleDock={() => toggleDock(panel.id)}
 						minWidth={panel.type === 'browser' ? 360 : panel.type === 'youtube' ? 280 : 260}
-						minHeight={panel.type === 'browser' ? 240 : 60}
+						minHeight={panel.type === 'browser' ? 240 : panel.type === 'audio' ? 300 : 60}
 						scale={canvas.scale}>
 						{zoomTagHandle(panel.id, panelLabels[panel.id] ?? fallbackLabel(panel))}
 						{panel.type === 'note' ? (
