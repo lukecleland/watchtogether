@@ -8,10 +8,15 @@ import { useEffect, useRef, useState } from "react";
  * here; clicking that chip flies the viewport back to the panel. The panel
  * itself never moves — this is navigation, not relocation.
  *
- * ## Per-user, not synced
- * Docking is a personal view preference, so nothing is sent over the data
- * channel. Docking a panel on one side leaves the other peer's dock untouched.
- * Renaming is local for the same reason.
+ * ## Shared bookmarks
+ * Tagging a panel adds a chip to *both* docks — these are landmarks in the
+ * shared canvas, not private shortcuts. A chip that arrived from the other
+ * person pulses until you click it, so you notice it without your viewport
+ * being hijacked. Renames are shared too.
+ *
+ * Dismissing, though, is local: your × clears your own bar only. Otherwise one
+ * person could delete a bookmark out of the other's UI, which is how you get
+ * "where did my pill go?".
  *
  * ## Renaming
  * The pencil button on a chip renames it. Submitting an empty name clears the
@@ -34,6 +39,8 @@ export interface DockEntry {
   label: string;
   /** True when the label is a user-set name rather than a derived one. */
   renamed?: boolean;
+  /** Tagged by the other person and not yet acknowledged — pulses for attention. */
+  pulsing?: boolean;
 }
 
 interface DockProps {
@@ -185,12 +192,20 @@ export function Dock({ entries, onJump, onRemove, onRename }: DockProps) {
         ) : (
           <div
             key={entry.id}
-            className="group flex items-center gap-1 bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 rounded-xl pl-2 pr-1 py-1.5 transition-colors shrink-0"
+            className={`group flex items-center gap-1 rounded-xl pl-2 pr-1 py-1.5 transition-colors shrink-0 border ${
+              entry.pulsing
+                ? "dock-pulse bg-violet-950/60 border-violet-500"
+                : "bg-zinc-800 hover:bg-zinc-700 border-zinc-700"
+            }`}
           >
             <button
               onClick={() => onJump(entry.id)}
               className="flex items-center gap-1.5 min-w-0"
-              title={`Go to ${entry.label}`}
+              title={
+                entry.pulsing
+                  ? `Go to ${entry.label} — just tagged by the other person`
+                  : `Go to ${entry.label}`
+              }
             >
               <DockIcon type={entry.type} />
               {/* Titles and filenames can be long — truncate; the full text
