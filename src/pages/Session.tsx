@@ -233,6 +233,24 @@ export function Session({ roomCode, isHost }: SessionProps) {
 	});
 	dataConnectionRef.current = dataConnection;
 
+	// The video panels are docked from the start, so however far someone wanders
+	// the canvas there is always a chip back to the faces. Purely local — each
+	// side seeds its own two chips, so nothing travels, nothing pulses, and a
+	// deliberate dismiss isn't fought (the effects re-run only when the stream
+	// or connection changes, not on every render).
+	useEffect(() => {
+		// Guarded on tracks like the panel itself: someone who joined without
+		// media has no "You" panel, so a chip to it would jump to empty canvas.
+		if (localStream && localStream.getTracks().length > 0) {
+			setDockedIds(prev => (prev.includes('local') ? prev : [...prev, 'local']));
+		}
+	}, [localStream]);
+	useEffect(() => {
+		if (status === 'connected') {
+			setDockedIds(prev => (prev.includes('remote') ? prev : [...prev, 'remote']));
+		}
+	}, [status]);
+
 	// Stop a chip pulsing — it's been seen
 	const acknowledgePulse = useCallback((id: string) => {
 		const timer = pulseTimersRef.current[id];
