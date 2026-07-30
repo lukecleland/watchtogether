@@ -738,6 +738,45 @@ export function Session({ roomCode, isHost }: SessionProps) {
 		});
 	};
 
+	/**
+	 * Zoomed far enough out that panel headers are too small to hit.
+	 *
+	 * At 30% a header bar is about 8px tall on screen — visible, but not
+	 * something you can reliably click, which leaves anything untagged
+	 * effectively unreachable until you zoom back in and hunt for it.
+	 */
+	const zoomedOut = canvas.scale < 0.45;
+
+	/**
+	 * A tag handle that stays the same size on screen however far out you are.
+	 *
+	 * Counter-scaling by the canvas scale is what keeps it legible: everything
+	 * inside the canvas shrinks with the zoom, so a handle that didn't fight
+	 * back would be exactly as unclickable as the header it stands in for.
+	 * Only shown for things that aren't tagged yet — once it's in the dock, the
+	 * chip is the way back to it.
+	 */
+	const zoomTagHandle = (id: string, label: string) =>
+		zoomedOut && !dockedIds.includes(id) ? (
+			<button
+				onClick={e => {
+					e.stopPropagation();
+					toggleDock(id);
+				}}
+				title={`Tag ${label}`}
+				aria-label={`Tag ${label}`}
+				className="absolute top-0 left-0 z-30 flex items-center gap-1 rounded-md bg-violet-600/95 hover:bg-violet-500 text-white text-[11px] font-medium px-1.5 py-1 shadow-lg pointer-events-auto"
+				style={{
+					transform: `scale(${1 / canvas.scale})`,
+					transformOrigin: 'top left'
+				}}>
+				<svg className="w-3 h-3" viewBox="0 0 24 24" fill="currentColor">
+					<path d="M5 5a2 2 0 012-2h10a2 2 0 012 2v16l-7-4-7 4V5z" />
+				</svg>
+				<span className="max-w-[7rem] truncate">{label}</span>
+			</button>
+		) : null;
+
 	// Compute spatial volume (0–1) for an audio panel.
 	//
 	// Two factors multiplied together:
@@ -1420,12 +1459,14 @@ export function Session({ roomCode, isHost }: SessionProps) {
 				)}
 				{localStream && localStream.getTracks().length > 0 && (
 					<DraggablePanel state={fixedPanels.local} {...makePanelHandlers('local')} minWidth={200} minHeight={120} scale={canvas.scale} className="z-10">
+						{zoomTagHandle('local', 'You')}
 						<VideoPanel stream={localStream} label="You" muted docked={dockedIds.includes('local')} onToggleDock={() => toggleDock('local')} />
 					</DraggablePanel>
 				)}
 
 				{status === 'connected' && (
 					<DraggablePanel state={fixedPanels.remote} {...makePanelHandlers('remote')} minWidth={200} minHeight={120} scale={canvas.scale} className="z-10">
+						{zoomTagHandle('remote', 'Guest')}
 						<VideoPanel stream={remoteStream} label="Guest" docked={dockedIds.includes('remote')} onToggleDock={() => toggleDock('remote')} />
 					</DraggablePanel>
 				)}
@@ -1438,6 +1479,7 @@ export function Session({ roomCode, isHost }: SessionProps) {
 						minWidth={panel.type === 'browser' ? 360 : panel.type === 'youtube' ? 280 : 260}
 						minHeight={panel.type === 'browser' ? 240 : 60}
 						scale={canvas.scale}>
+						{zoomTagHandle(panel.id, panelLabels[panel.id] ?? fallbackLabel(panel))}
 						{panel.type === 'note' ? (
 							<StickyNote
 								note={panel.note ?? defaultNoteContent()}
