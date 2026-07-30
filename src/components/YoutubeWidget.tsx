@@ -258,7 +258,7 @@ export function YoutubeWidget({
       {!minimised && (
         <>
           {/* URL input */}
-          <div className="no-drag px-3 py-2 flex gap-2 shrink-0">
+          <div className="px-3 py-2 flex gap-2 shrink-0">
             <div className="relative flex-1 min-w-0">
               <input
                 type="text"

@@ -302,7 +302,7 @@ export function AudioPlayer({
       </div>
 
       {!minimised && (
-        <div className="no-drag flex flex-col flex-1 gap-2 px-3 py-2 min-w-0">
+        <div className="flex flex-col flex-1 gap-2 px-3 py-2 min-w-0">
           {!fileName ? (
             /* ── Drop zone ── */
             <label

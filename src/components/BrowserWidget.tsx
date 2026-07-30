@@ -95,7 +95,7 @@ export function BrowserWidget({
 
       {!minimised && (
         <>
-          <div className="no-drag flex gap-2 px-2 py-2 bg-zinc-900 shrink-0">
+          <div className="flex gap-2 px-2 py-2 bg-zinc-900 shrink-0">
             <input
               type="url"
               value={inputValue}
@@ -120,7 +120,7 @@ export function BrowserWidget({
               </a>
             )}
           </div>
-          <div className="no-drag relative flex-1 min-h-0 bg-white">
+          <div className="relative flex-1 min-h-0 bg-white">
             {url ? (
               <iframe key={url} src={url} title="Mini browser" className="absolute inset-0 w-full h-full border-0" />
             ) : (

@@ -247,8 +247,9 @@ export function DraggablePanel({
       position={{ x: state.x, y: state.y }}
       onDrag={handleDrag}
       onStop={handleDragStop}
-      handle=".drag-handle"
-      cancel=".no-drag"
+      // The panel itself is the drag handle. Native controls and explicitly
+      // interactive regions opt out so they retain their normal behaviour.
+      cancel="input, button, a, textarea, select, iframe, .no-drag, [contenteditable='true']"
       scale={scale}
       enableUserSelectHack={false}
     >
