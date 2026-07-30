@@ -2,7 +2,47 @@
 export type PanelId = "local" | "remote";
 
 /** The type of a dynamically-spawned panel. */
-export type DynamicPanelType = "youtube" | "audio";
+export type DynamicPanelType = "youtube" | "audio" | "note";
+
+/** Which face a sticky note is currently showing. */
+export type NoteKind = "text" | "chord" | "tab";
+
+/**
+ * A chord diagram: six strings, five frets, drawn from `baseFret` upward.
+ *
+ * `dots` is indexed by string, low E first (left to right as a chord box is
+ * conventionally drawn). Each value is a fret number relative to `baseFret`,
+ * or one of: 0 open, -1 muted, -2 unset. Unset is the default so a fresh
+ * diagram is blank — six muted markers would read as a deliberate shape.
+ */
+export interface ChordShape {
+  name: string;
+  baseFret: number;
+  dots: number[];
+}
+
+/**
+ * Contents of a sticky note. All three faces are kept regardless of which one
+ * is showing, so switching kind never throws away what you typed.
+ */
+export interface NoteContent {
+  kind: NoteKind;
+  text: string;
+  /** Six strings of tab, high e first — the order they're drawn in. */
+  tab: string[];
+  chord: ChordShape;
+  colour: string;
+}
+
+export function defaultNoteContent(): NoteContent {
+  return {
+    kind: "text",
+    text: "",
+    tab: ["", "", "", "", "", ""],
+    chord: { name: "", baseFret: 1, dots: [-2, -2, -2, -2, -2, -2] },
+    colour: "amber"
+  };
+}
 
 /**
  * Layout state for a single panel.
@@ -20,11 +60,13 @@ export interface PanelState {
   z: number;
 }
 
-/** A dynamically spawned media panel (YouTube player or audio player). */
+/** A dynamically spawned panel (YouTube player, audio player or sticky note). */
 export interface DynamicPanel {
   id: string;
   type: DynamicPanelType;
   state: PanelState;
   initialVideoId?: string;
   initialFile?: File;
+  /** Live contents for a note panel — updated in place as either peer edits. */
+  note?: NoteContent;
 }

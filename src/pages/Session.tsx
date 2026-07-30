@@ -32,13 +32,15 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { VideoPanel } from '../components/VideoPanel';
 import { YoutubeWidget } from '../components/YoutubeWidget';
 import { AudioPlayer } from '../components/AudioPlayer';
+import { StickyNote } from '../components/StickyNote';
 import { DraggablePanel } from '../components/DraggablePanel';
 import { Whiteboard, type WhiteboardHandle, type WhiteboardStroke } from '../components/Whiteboard';
 import { WhiteboardToolbar } from '../components/WhiteboardToolbar';
 import { Dock, type DockEntry } from '../components/Dock';
 import { usePeer } from '../hooks/usePeer';
 import { useYouTubeSync, type SyncMessage } from '../hooks/useYouTubeSync';
-import type { PanelId, PanelState, DynamicPanel } from '../types/panels';
+import type { PanelId, PanelState, DynamicPanel, NoteContent } from '../types/panels';
+import { defaultNoteContent } from '../types/panels';
 
 interface SessionProps {
 	roomCode: string;
@@ -278,6 +280,14 @@ export function Session({ roomCode, isHost }: SessionProps) {
 					...(initialFile ? { initialFile } : {})
 				}
 			]);
+		} else if (msg.type === 'spawn-note') {
+			setDynamicPanels(prev => [
+				...prev,
+				{ id: msg.id, type: 'note' as const, state: denormalisePanel(msg.state), note: msg.note }
+			]);
+		} else if (msg.type === 'note-update') {
+			// Last write wins — a note is small enough that merging isn't worth it
+			setDynamicPanels(prev => prev.map(p => (p.id === msg.id ? { ...p, note: msg.note } : p)));
 		} else if (msg.type === 'remove-panel') {
 			setDynamicPanels(prev => prev.filter(p => p.id !== msg.id));
 			// The panel is gone, so any local dock chip pointing at it must go too
@@ -433,6 +443,7 @@ export function Session({ roomCode, isHost }: SessionProps) {
 			local: 480,
 			remote: 480,
 			audio: 360,
+			note: 420,
 			position: 0
 		};
 
@@ -472,12 +483,14 @@ export function Session({ roomCode, isHost }: SessionProps) {
 		jumpAnimRef.current = requestAnimationFrame(step);
 	};
 
-	// Cancel any in-flight jump and pending pulse timers on unmount
+	// Cancel any in-flight jump and pending timers on unmount
 	useEffect(() => {
 		const pulseTimers = pulseTimersRef.current;
+		const noteTimers = noteSendTimersRef.current;
 		return () => {
 			if (jumpAnimRef.current !== null) cancelAnimationFrame(jumpAnimRef.current);
 			Object.values(pulseTimers).forEach(clearTimeout);
+			Object.values(noteTimers).forEach(clearTimeout);
 		};
 	}, []);
 
@@ -485,7 +498,15 @@ export function Session({ roomCode, isHost }: SessionProps) {
 	// video loaded, no file chosen). Numbered only when more than one of that
 	// type exists, so a lone panel reads "YouTube" rather than "YouTube 1".
 	const fallbackLabel = (panel: DynamicPanel): string => {
-		const base = panel.type === 'youtube' ? 'YouTube' : 'Audio';
+		// A note names itself after its contents where it can — the chord name,
+		// or the note's first line — before falling back to a numbered label.
+		if (panel.type === 'note' && panel.note) {
+			const { kind, chord, text } = panel.note;
+			if (kind === 'chord' && chord.name.trim()) return chord.name.trim();
+			const firstLine = text.split('\n')[0].trim();
+			if (kind === 'text' && firstLine) return firstLine.slice(0, 40);
+		}
+		const base = panel.type === 'youtube' ? 'YouTube' : panel.type === 'note' ? 'Note' : 'Audio';
 		const sameType = dynamicPanels.filter(p => p.type === panel.type);
 		if (sameType.length < 2) return base;
 		return `${base} ${sameType.findIndex(p => p.id === panel.id) + 1}`;
@@ -573,10 +594,16 @@ export function Session({ roomCode, isHost }: SessionProps) {
 
 	// Spawn a new dynamic panel at the given screen position (screen coords → world coords).
 	// Pass fromRemote=true when applying a remote-initiated spawn (skips sync to avoid loops).
-	const spawnPanel = (type: 'youtube' | 'audio', screenX: number, screenY: number, extra?: { initialVideoId?: string; initialFile?: File }, remoteId?: string) => {
+	const spawnPanel = (
+		type: 'youtube' | 'audio' | 'note',
+		screenX: number,
+		screenY: number,
+		extra?: { initialVideoId?: string; initialFile?: File; note?: NoteContent },
+		remoteId?: string
+	) => {
 		const { x: tx, y: ty, scale } = canvasStateRef.current;
-		const w = type === 'youtube' ? 320 : 300;
-		const h = type === 'youtube' ? 260 : 175;
+		const w = type === 'youtube' ? 320 : type === 'note' ? 240 : 300;
+		const h = type === 'youtube' ? 260 : type === 'note' ? 220 : 175;
 		const worldX = (screenX - tx) / scale - w / 2;
 		const worldY = (screenY - ty) / scale - h / 2;
 		const nextZ = ++topZRef.current;
@@ -603,8 +630,23 @@ export function Session({ roomCode, isHost }: SessionProps) {
 					// Empty audio panel (no file yet)
 					sendSync({ type: 'spawn-audio', id, state: normalisePanel(state) });
 				}
+			} else if (type === 'note') {
+				sendSync({ type: 'spawn-note', id, state: normalisePanel(state), note: extra?.note ?? defaultNoteContent() });
 			}
 		}
+	};
+
+	// Note edits are sent whole but debounced, so typing doesn't flood the
+	// channel. The local state updates immediately either way.
+	const noteSendTimersRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
+	const updateNote = (id: string, note: NoteContent) => {
+		setDynamicPanels(prev => prev.map(p => (p.id === id ? { ...p, note } : p)));
+		const timers = noteSendTimersRef.current;
+		if (timers[id]) clearTimeout(timers[id]);
+		timers[id] = setTimeout(() => {
+			sendSync({ type: 'note-update', id, note });
+			delete timers[id];
+		}, 250);
 	};
 
 	useEffect(() => {
@@ -972,6 +1014,15 @@ export function Session({ roomCode, isHost }: SessionProps) {
 				{/* Add media buttons */}
 				<div className="flex items-center gap-1 sm:gap-1.5 shrink-0">
 					<button
+						onClick={() => spawnPanel('note', window.innerWidth / 2, window.innerHeight / 2)}
+						className="flex items-center gap-1 sm:gap-1.5 bg-zinc-800 hover:bg-zinc-700 active:bg-zinc-600 border border-zinc-700 text-zinc-300 text-xs font-medium px-2 sm:px-3 py-1.5 rounded-lg transition-colors"
+						title="Add a sticky note">
+						<svg className="w-3.5 h-3.5 text-amber-300 shrink-0" viewBox="0 0 24 24" fill="currentColor">
+							<path d="M5 3h14a2 2 0 012 2v9l-7 7H5a2 2 0 01-2-2V5a2 2 0 012-2zm9 17.5V15a1 1 0 011-1h5.5L14 20.5z" />
+						</svg>
+						<span className="hidden sm:inline">Note</span>
+					</button>
+					<button
 						onClick={() => spawnPanel('youtube', window.innerWidth / 2, window.innerHeight / 2)}
 						className="flex items-center gap-1 sm:gap-1.5 bg-zinc-800 hover:bg-zinc-700 active:bg-zinc-600 border border-zinc-700 text-zinc-300 text-xs font-medium px-2 sm:px-3 py-1.5 rounded-lg transition-colors"
 						title="Add a YouTube player">
@@ -1097,7 +1148,15 @@ export function Session({ roomCode, isHost }: SessionProps) {
 						minWidth={panel.type === 'youtube' ? 280 : 260}
 						minHeight={60}
 						scale={canvas.scale}>
-						{panel.type === 'youtube' ? (
+						{panel.type === 'note' ? (
+							<StickyNote
+								note={panel.note ?? defaultNoteContent()}
+								onChange={next => updateNote(panel.id, next)}
+								onClose={() => removePanel(panel.id)}
+								docked={dockedIds.includes(panel.id)}
+								onToggleDock={() => toggleDock(panel.id)}
+							/>
+						) : panel.type === 'youtube' ? (
 							<YoutubeWidget
 								dataConnection={dataConnection}
 								initialVideoId={panel.initialVideoId}
