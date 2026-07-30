@@ -1,0 +1,84 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <!--
+    watchtogether app icon.
+
+    Two panels on a shared canvas, each holding a play triangle — the app in
+    one mark: two people, one surface, something playing. The panels overlap
+    because the point is that the surface is shared.
+
+    Drawn tight to the edges (the mark spans ~90% of the frame) so it still
+    reads at 192px in a launcher. The maskable variant is a separate file:
+    Android crops icons to a circle, and this crop is deliberately too tight
+    to survive that.
+  -->
+  <defs>
+    <!-- The diagonal light sweep: dark at the corners, blue through violet
+         to magenta across the middle. Runs bottom-left to top-right, so it
+         crosses both panels as one continuous band. -->
+    <linearGradient id="sweep" x1="0" y1="1" x2="1" y2="0">
+      <stop offset="0" stop-color="#0d1030" />
+      <stop offset="0.22" stop-color="#1e3a8a" />
+      <stop offset="0.38" stop-color="#3b5bd9" />
+      <stop offset="0.5" stop-color="#8b5cf6" />
+      <stop offset="0.6" stop-color="#d946ef" />
+      <stop offset="0.74" stop-color="#7c3aed" />
+      <stop offset="0.88" stop-color="#2a2065" />
+      <stop offset="1" stop-color="#0d1030" />
+    </linearGradient>
+
+    <!-- Edge light, brightest where the sweep crosses the panel border -->
+    <linearGradient id="edge" x1="0" y1="1" x2="1" y2="0">
+      <stop offset="0" stop-color="#3b82f6" stop-opacity="0.55" />
+      <stop offset="0.5" stop-color="#c4b5fd" stop-opacity="0.95" />
+      <stop offset="0.7" stop-color="#f0abfc" stop-opacity="0.9" />
+      <stop offset="1" stop-color="#4c1d95" stop-opacity="0.5" />
+    </linearGradient>
+
+    <!-- Background: not flat black, so the panels sit on something -->
+    <radialGradient id="bg" cx="0.5" cy="0.42" r="0.78">
+      <stop offset="0" stop-color="#0f1330" />
+      <stop offset="1" stop-color="#06060f" />
+    </radialGradient>
+  </defs>
+
+  <rect width="512" height="512" fill="url(#bg)" />
+
+  <!-- Back panel, upper left -->
+  <g>
+    <rect x="26" y="58" width="272" height="272" rx="62" fill="url(#sweep)" />
+    <rect
+      x="26" y="58" width="272" height="272" rx="62"
+      fill="none" stroke="url(#edge)" stroke-width="3"
+    />
+    <!-- Play triangle, knocked out dark against the sweep. The round join
+         softens the corners to match the panels' radius. Sat left of this
+         panel's true centre so it centres in the part the front panel
+         doesn't cover, and so its apex clears that edge rather than being
+         sliced into a bowtie. -->
+    <path
+      d="M 106 152 L 192 194 L 106 236 Z"
+      fill="#0a0b1e" stroke="#0a0b1e" stroke-width="18" stroke-linejoin="round"
+      opacity="0.92"
+    />
+  </g>
+
+  <!-- Front panel, lower right. Sits over the back one, with a dark rim so
+       the overlap reads as two separate surfaces rather than one blob. -->
+  <g>
+    <rect
+      x="214" y="182" width="272" height="272" rx="62"
+      fill="#06060f" stroke="none"
+      transform="translate(-5,-5)" opacity="0.9"
+    />
+    <rect x="214" y="182" width="272" height="272" rx="62" fill="url(#sweep)" />
+    <rect
+      x="214" y="182" width="272" height="272" rx="62"
+      fill="none" stroke="url(#edge)" stroke-width="3"
+    />
+    <path
+      d="M 314 274 L 412 318 L 314 362 Z"
+      fill="#0a0b1e" stroke="#0a0b1e" stroke-width="18" stroke-linejoin="round"
+      opacity="0.92"
+    />
+  </g>
+</svg>
