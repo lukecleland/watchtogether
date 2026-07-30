@@ -260,6 +260,30 @@ export function Session({ roomCode, isHost }: SessionProps) {
 		});
 	}, [remoteStreams, fixedPanels.remote]);
 
+	// The video panels are docked from the start, so however far someone wanders
+	// the canvas there is always a chip back to the faces. Purely local — each
+	// side seeds its own chips, so nothing travels and nothing pulses.
+	useEffect(() => {
+		// Guarded on tracks like the panel itself: someone who joined without
+		// media has no "You" panel, so a chip to it would jump to empty canvas.
+		if (localStream && localStream.getTracks().length > 0) {
+			setDockedIds(prev => (prev.includes('local') ? prev : [...prev, 'local']));
+		}
+	}, [localStream]);
+	// One chip per guest, seeded once when that peer first appears — the seen
+	// set means another peer joining later can't resurrect a chip that was
+	// deliberately dismissed, and a peer who leaves takes their chip with them
+	// (dockEntriesFor drops ids with no matching stream).
+	const seededPeerChipsRef = useRef<Set<string>>(new Set());
+	useEffect(() => {
+		const newcomers = remoteStreams
+			.map(remote => remote.peerId)
+			.filter(peerId => !seededPeerChipsRef.current.has(peerId));
+		if (newcomers.length === 0) return;
+		newcomers.forEach(peerId => seededPeerChipsRef.current.add(peerId));
+		setDockedIds(prev => [...prev, ...newcomers.map(remotePanelId).filter(id => !prev.includes(id))]);
+	}, [remoteStreams]);
+
 	// Stop a chip pulsing — it's been seen
 	const acknowledgePulse = useCallback((id: string) => {
 		const timer = pulseTimersRef.current[id];
