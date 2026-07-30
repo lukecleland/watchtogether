@@ -30,8 +30,22 @@ export interface NoteContent {
   text: string;
   /** Six strings of tab, high e first — the order they're drawn in. */
   tab: string[];
-  chord: ChordShape;
+  /** One or more chord diagrams. A song usually needs several. */
+  chords: ChordShape[];
+  /** Legacy single diagram from an older build; folded into `chords` on read. */
+  chord?: ChordShape;
   colour: string;
+}
+
+export function emptyChord(): ChordShape {
+  return { name: "", baseFret: 1, dots: [-2, -2, -2, -2, -2, -2] };
+}
+
+/** Older notes carried a single `chord`; read both shapes. */
+export function chordsOf(note: NoteContent): ChordShape[] {
+  if (note.chords?.length) return note.chords;
+  if (note.chord) return [note.chord];
+  return [emptyChord()];
 }
 
 export function defaultNoteContent(): NoteContent {
@@ -39,7 +53,7 @@ export function defaultNoteContent(): NoteContent {
     kind: "text",
     text: "",
     tab: ["", "", "", "", "", ""],
-    chord: { name: "", baseFret: 1, dots: [-2, -2, -2, -2, -2, -2] },
+    chords: [emptyChord()],
     colour: "amber"
   };
 }

@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { DockButton } from "./Dock";
+import { chordsOf, emptyChord } from "../types/panels";
 import type { ChordShape, NoteContent, NoteKind } from "../types/panels";
 
 /**
@@ -78,7 +79,7 @@ function ChordDiagram({
   };
 
   return (
-    <svg viewBox={`0 0 ${w} ${h}`} className="w-full h-auto max-h-[150px]" role="img" aria-label="Chord diagram">
+    <svg viewBox={`0 0 ${w} ${h}`} className="w-full h-auto max-h-[104px]" role="img" aria-label="Chord diagram">
       {/* Nut — thick only when the diagram starts at the first fret */}
       <line
         x1={padX}
@@ -173,6 +174,16 @@ export function StickyNote({ note, onChange, onClose, docked = false, onToggleDo
   const c = COLOURS[note.colour] ?? COLOURS.amber;
 
   const set = (patch: Partial<NoteContent>) => onChange({ ...note, ...patch });
+
+  const chords = chordsOf(note);
+  const writeChords = (next: ChordShape[]) =>
+    // Drop the legacy single-chord field once the list is written, so the two
+    // can never disagree about what the note holds.
+    onChange({ ...note, chords: next, chord: undefined });
+  const setChord = (i: number, next: ChordShape) =>
+    writeChords(chords.map((c, j) => (j === i ? next : c)));
+  const addChord = () => writeChords([...chords, emptyChord()]);
+  const removeChord = (i: number) => writeChords(chords.filter((_, j) => j !== i));
   const setKind = (kind: NoteKind) => set({ kind });
 
   // Apply remote text edits to the textarea. The field is uncontrolled so that
@@ -270,34 +281,62 @@ export function StickyNote({ note, onChange, onClose, docked = false, onToggleDo
         )}
 
         {note.kind === "chord" && (
-          <div className="flex flex-col gap-1.5 h-full">
-            <div className="flex items-center gap-1.5 shrink-0">
-              <input
-                value={note.chord.name}
-                onChange={e => set({ chord: { ...note.chord, name: e.target.value } })}
-                placeholder="Chord"
-                spellCheck={false}
-                className="flex-1 min-w-0 bg-black/10 rounded px-2 py-1 text-sm font-semibold outline-none placeholder:opacity-40"
-              />
-              <label className="flex items-center gap-1 text-[10px] opacity-70 shrink-0">
-                fret
-                <input
-                  type="number"
-                  min={1}
-                  max={15}
-                  value={note.chord.baseFret}
-                  onChange={e =>
-                    set({
-                      chord: { ...note.chord, baseFret: Math.max(1, Math.min(15, Number(e.target.value) || 1)) }
-                    })
-                  }
-                  className="w-9 bg-black/10 rounded px-1 py-1 text-xs outline-none"
-                />
-              </label>
+          <div className="flex flex-col gap-2">
+            {/* A song needs several chords, so they wrap into a grid and the
+                note can simply be resized to fit more. */}
+            <div className="grid gap-2 [grid-template-columns:repeat(auto-fill,minmax(92px,1fr))]">
+              {chords.map((ch, i) => (
+                <div key={i} className="flex flex-col gap-1">
+                  <div className="flex items-center gap-1">
+                    <input
+                      value={ch.name}
+                      onChange={e => setChord(i, { ...ch, name: e.target.value })}
+                      placeholder="Chord"
+                      aria-label={`Chord ${i + 1} name`}
+                      spellCheck={false}
+                      className="flex-1 min-w-0 bg-black/10 rounded px-1.5 py-0.5 text-xs font-semibold outline-none placeholder:opacity-40"
+                    />
+                    <input
+                      type="number"
+                      min={1}
+                      max={15}
+                      value={ch.baseFret}
+                      onChange={e =>
+                        setChord(i, {
+                          ...ch,
+                          baseFret: Math.max(1, Math.min(15, Number(e.target.value) || 1))
+                        })
+                      }
+                      aria-label={`Chord ${i + 1} starting fret`}
+                      className="w-8 bg-black/10 rounded px-1 py-0.5 text-[10px] outline-none shrink-0"
+                    />
+                    {chords.length > 1 && (
+                      <button
+                        onClick={() => removeChord(i)}
+                        title="Remove this chord"
+                        aria-label={`Remove chord ${i + 1}`}
+                        className="shrink-0 opacity-50 hover:opacity-100 transition-opacity"
+                      >
+                        <svg className="w-3 h-3" fill="none" stroke="currentColor" strokeWidth={2.5} viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                        </svg>
+                      </button>
+                    )}
+                  </div>
+                  <ChordDiagram chord={ch} onChange={next => setChord(i, next)} />
+                </div>
+              ))}
             </div>
-            <div className="flex-1 min-h-0 flex items-center justify-center">
-              <ChordDiagram chord={note.chord} onChange={next => set({ chord: next })} />
-            </div>
+
+            <button
+              onClick={addChord}
+              className="self-start flex items-center gap-1 text-xs font-medium px-2 py-1 rounded-lg bg-black/10 hover:bg-black/20 transition-colors"
+            >
+              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth={2.5} viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M12 5v14M5 12h14" />
+              </svg>
+              Add chord
+            </button>
           </div>
         )}
 
