@@ -865,6 +865,8 @@ export function Session({ roomCode, isHost }: SessionProps) {
 							/>
 						) : (
 							<AudioPlayer
+								id={panel.id}
+								dataConnection={dataConnection}
 								initialFile={panel.initialFile}
 								onClose={() => removePanel(panel.id)}
 								spatialVolume={spatialVolumeForPanel(panel.state)}

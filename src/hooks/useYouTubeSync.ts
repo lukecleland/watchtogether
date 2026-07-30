@@ -32,6 +32,9 @@ export type SyncMessage =
 	| { type: 'play'; time: number }
 	| { type: 'pause'; time: number }
 	| { type: 'seek'; time: number }
+	| { type: 'audio-play'; id: string; time: number }
+	| { type: 'audio-pause'; id: string; time: number }
+	| { type: 'audio-seek'; id: string; time: number }
 	| { type: 'panel-update'; id: string; state: PanelState }
 	| {
 			type: 'draw';
