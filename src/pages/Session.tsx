@@ -45,6 +45,13 @@ interface SessionProps {
 	isHost: boolean;
 }
 
+interface PositionTag {
+	id: string;
+	x: number;
+	y: number;
+	label: string;
+}
+
 // ── Resolution-independent panel sync ────────────────────────────────────
 // Panels are stored / rendered in local CSS pixels. Before sending over the
 // wire we convert to viewport fractions (0–1) so the remote peer can place
@@ -130,6 +137,9 @@ export function Session({ roomCode, isHost }: SessionProps) {
 	const [mediaError, setMediaError] = useState<string | null>(null);
 	const [fixedPanels, setFixedPanels] = useState<Record<PanelId, PanelState>>(defaultFixedPanels);
 	const [dynamicPanels, setDynamicPanels] = useState<DynamicPanel[]>([]);
+	const [positionTags, setPositionTags] = useState<PositionTag[]>([]);
+	const positionTagsRef = useRef<PositionTag[]>([]);
+	positionTagsRef.current = positionTags;
 	// Tracks the highest z-index currently in use so we can raise panels on click
 	const topZRef = useRef(20);
 	// Background drag-over indicator
@@ -151,6 +161,11 @@ export function Session({ roomCode, isHost }: SessionProps) {
 	const [isGrabbing, setIsGrabbing] = useState(false);
 	const isPanningRef = useRef(false);
 	const panStartRef = useRef({ mx: 0, my: 0, cx: 0, cy: 0 });
+	const longPressRef = useRef<{
+		timer: ReturnType<typeof setTimeout>;
+		x: number;
+		y: number;
+	} | null>(null);
 
 	// ── Dock ─────────────────────────────────────────────────────────────────
 	// Panel ids bookmarked in the dock, in the order they were added. Tagging
@@ -267,6 +282,16 @@ export function Session({ roomCode, isHost }: SessionProps) {
 			setDynamicPanels(prev => prev.filter(p => p.id !== msg.id));
 			// The panel is gone, so any local dock chip pointing at it must go too
 			forgetPanel(msg.id);
+		} else if (msg.type === 'position-tag') {
+			const tag: PositionTag = {
+				id: msg.id,
+				x: msg.x * window.innerWidth,
+				y: msg.y * window.innerHeight,
+				label: msg.label
+			};
+			setPositionTags(prev => (prev.some(item => item.id === tag.id) ? prev : [...prev, tag]));
+			setDockedIds(prev => (prev.includes(tag.id) ? prev : [...prev, tag.id]));
+			startPulse(tag.id);
 		} else if (msg.type === 'dock-tag') {
 			// Same perspective swap as panel-update: their "You" is our "Guest"
 			const id = swapFixedId(msg.id);
@@ -373,12 +398,17 @@ export function Session({ roomCode, isHost }: SessionProps) {
 	const jumpToPanel = (id: string) => {
 		// Going there counts as seeing it
 		acknowledgePulse(id);
+		const positionTag = positionTags.find(tag => tag.id === id);
 		const isFixed = id === 'local' || id === 'remote';
 		const panel = isFixed ? null : dynamicPanels.find(p => p.id === id);
-		const target = isFixed ? fixedPanels[id] : panel?.state;
+		const target = positionTag
+			? { x: positionTag.x, y: positionTag.y, width: 0, height: 0, z: 0 }
+			: isFixed
+				? fixedPanels[id]
+				: panel?.state;
 		if (!target) return;
 
-		const type: DockEntry['type'] = isFixed ? id : (panel?.type ?? 'youtube');
+		const type: DockEntry['type'] = positionTag ? 'position' : isFixed ? id : (panel?.type ?? 'youtube');
 		const vw = window.innerWidth;
 		const vh = window.innerHeight;
 
@@ -389,14 +419,15 @@ export function Session({ roomCode, isHost }: SessionProps) {
 			youtube: 720,
 			local: 480,
 			remote: 480,
-			audio: 360
+			audio: 360,
+			position: 0
 		};
 
 		// Start from the ideal width, then make sure the whole panel still fits
 		// on screen with a margin, and stay inside the app's zoom limits.
-		const fitScale = Math.min((vw * 0.9) / target.width, (vh * 0.85) / target.height);
-		const idealScale = IDEAL_ON_SCREEN_WIDTH[type] / target.width;
-		const toScale = Math.max(0.25, Math.min(4, fitScale, idealScale));
+		const fitScale = positionTag ? canvasStateRef.current.scale : Math.min((vw * 0.9) / target.width, (vh * 0.85) / target.height);
+		const idealScale = positionTag ? canvasStateRef.current.scale : IDEAL_ON_SCREEN_WIDTH[type] / target.width;
+		const toScale = positionTag ? canvasStateRef.current.scale : Math.max(0.25, Math.min(4, fitScale, idealScale));
 
 		const { x: fromX, y: fromY, scale: fromScale } = canvasStateRef.current;
 		const destX = vw / 2 - (target.x + target.width / 2) * toScale;
@@ -447,6 +478,10 @@ export function Session({ roomCode, isHost }: SessionProps) {
 	const dockEntries: DockEntry[] = dockedIds.flatMap((id): DockEntry[] => {
 		const custom = customLabels[id];
 		const pulsing = pulsingIds.includes(id);
+		const positionTag = positionTags.find(tag => tag.id === id);
+		if (positionTag) {
+			return [{ id, type: 'position', label: custom ?? positionTag.label, renamed: !!custom, pulsing }];
+		}
 		if (id === 'local' || id === 'remote') {
 			const auto = id === 'local' ? 'You' : 'Guest';
 			return [{ id, type: id, label: custom ?? auto, renamed: !!custom, pulsing }];
@@ -741,17 +776,61 @@ export function Session({ roomCode, isHost }: SessionProps) {
 		setIsGrabbing(false);
 	};
 
+	const cancelLongPress = () => {
+		if (!longPressRef.current) return;
+		clearTimeout(longPressRef.current.timer);
+		longPressRef.current = null;
+	};
+
 	// Middle or right-click drag pans without space held
 	const handleOuterMouseDown = (e: React.MouseEvent<HTMLDivElement>) => {
 		if (e.button === 1 || e.button === 2) {
 			e.preventDefault();
 			startPan(e.clientX, e.clientY);
+			return;
 		}
+		if (e.button !== 0 || !(e.target instanceof HTMLCanvasElement) || isPanMode) return;
+
+		cancelLongPress();
+		const screenX = e.clientX;
+		const screenY = e.clientY;
+		const timer = setTimeout(() => {
+			const { x: tx, y: ty, scale } = canvasStateRef.current;
+			const tag: PositionTag = {
+				id: crypto.randomUUID(),
+				x: (screenX - tx) / scale,
+				y: (screenY - ty) / scale,
+				label: `Position ${positionTagsRef.current.length + 1}`
+			};
+			longPressRef.current = null;
+			setPositionTags(prev => [...prev, tag]);
+			setDockedIds(prev => [...prev, tag.id]);
+			sendSync({
+				type: 'position-tag',
+				id: tag.id,
+				x: tag.x / window.innerWidth,
+				y: tag.y / window.innerHeight,
+				label: tag.label
+			});
+		}, 2000);
+		longPressRef.current = { timer, x: screenX, y: screenY };
 	};
-	const handleOuterMouseMove = (e: React.MouseEvent<HTMLDivElement>) => movePan(e.clientX, e.clientY);
+	const handleOuterMouseMove = (e: React.MouseEvent<HTMLDivElement>) => {
+		const pending = longPressRef.current;
+		if (pending && Math.hypot(e.clientX - pending.x, e.clientY - pending.y) > 6) cancelLongPress();
+		movePan(e.clientX, e.clientY);
+	};
 	const handleOuterMouseUp = (e: React.MouseEvent<HTMLDivElement>) => {
+		cancelLongPress();
 		if (e.button === 1 || e.button === 2) endPan();
 	};
+
+	useEffect(
+		() => () => {
+			if (longPressRef.current) clearTimeout(longPressRef.current.timer);
+		},
+		[]
+	);
 
 	// ── Dot-grid background ───────────────────────────────────────────────
 	const GRID = 32;
@@ -966,6 +1045,18 @@ export function Session({ roomCode, isHost }: SessionProps) {
 					// its children. Let those empty areas reach the whiteboard.
 					pointerEvents: 'none'
 				}}>
+				{positionTags.map(tag => (
+					<div
+						key={tag.id}
+						className="absolute z-[5] -translate-x-1/2 -translate-y-full"
+						style={{ left: tag.x, top: tag.y }}
+						title={customLabels[tag.id] ?? tag.label}>
+						<span className="position-tag-ripple absolute left-1/2 bottom-0 w-5 h-5 -translate-x-1/2 translate-y-1/2 rounded-full border-2 border-amber-400" />
+						<svg className="relative w-7 h-9 text-amber-400 drop-shadow-lg" viewBox="0 0 24 32" fill="currentColor">
+							<path d="M5 1a1 1 0 011 1v2h12a1 1 0 01.8 1.6L16 9l2.8 3.4a1 1 0 01-.8 1.6H7v16a1 1 0 11-2 0V1z" />
+						</svg>
+					</div>
+				))}
 				{localStream && localStream.getTracks().length > 0 && (
 					<DraggablePanel state={fixedPanels.local} {...makePanelHandlers('local')} minWidth={200} minHeight={120} scale={canvas.scale} className="z-10">
 						<VideoPanel stream={localStream} label="You" muted docked={dockedIds.includes('local')} onToggleDock={() => toggleDock('local')} />

@@ -45,8 +45,24 @@ body {
   animation: dock-pulse 1.5s ease-out infinite;
 }
 
+@keyframes position-tag-ripple {
+  0% {
+    opacity: 0.9;
+    transform: translate(-50%, 50%) scale(0.25);
+  }
+  100% {
+    opacity: 0;
+    transform: translate(-50%, 50%) scale(5);
+  }
+}
+
+.position-tag-ripple {
+  animation: position-tag-ripple 1.2s ease-out 2;
+}
+
 @media (prefers-reduced-motion: reduce) {
-  .dock-pulse {
+  .dock-pulse,
+  .position-tag-ripple {
     animation: none;
   }
 }
