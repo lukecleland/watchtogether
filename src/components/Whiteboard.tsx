@@ -82,7 +82,7 @@ export interface WhiteboardHandle {
 }
 
 interface WhiteboardProps {
-  tool: "pen" | "eraser" | "text";
+  tool: "pen" | "eraser" | "text" | "region";
   color: string;
   width: number; // raw toolbar pixel size (3 / 8 / 16)
   nib: Nib;
@@ -91,6 +91,8 @@ interface WhiteboardProps {
   onStroke: (stroke: WhiteboardStroke) => void;
   onText: (item: WhiteboardText) => void;
   onTextEdit: (id: string, text: string) => void;
+  /** A dragged-out area, in world-normalised coordinates. */
+  onRegion: (r: { x: number; y: number; w: number; h: number }) => void;
   canvasTransform: { x: number; y: number; scale: number };
 }
 
@@ -133,6 +135,7 @@ const Whiteboard = forwardRef<WhiteboardHandle, WhiteboardProps>(
       onStroke,
       onText,
       onTextEdit,
+      onRegion,
       canvasTransform
     },
     ref
@@ -150,6 +153,9 @@ const Whiteboard = forwardRef<WhiteboardHandle, WhiteboardProps>(
     const [editing, setEditing] = useState<Caret | null>(null);
     const editingRef = useRef<Caret | null>(null);
     const editRef = useRef<HTMLInputElement>(null);
+    // Marquee for the region tool, in screen coordinates while dragging
+    const [marquee, setMarquee] = useState<{ x0: number; y0: number; x1: number; y1: number } | null>(null);
+    const marqueeRef = useRef<{ x0: number; y0: number; x1: number; y1: number } | null>(null);
     // Rolling state for the fountain nib's speed-driven taper
     const fountainRef = useRef({ w: 1, at: 0 });
     // Always-current transform without stale closure issues
@@ -514,6 +520,13 @@ const Whiteboard = forwardRef<WhiteboardHandle, WhiteboardProps>(
       // pointer-down would mount the input mid-gesture, and the pointer-up that
       // follows lands on the canvas and blurs it straight back shut.
       if (tool === "text") return;
+      if (tool === "region") {
+        e.currentTarget.setPointerCapture(e.pointerId);
+        const m = { x0: e.clientX, y0: e.clientY, x1: e.clientX, y1: e.clientY };
+        marqueeRef.current = m;
+        setMarquee(m);
+        return;
+      }
       e.currentTarget.setPointerCapture(e.pointerId);
       isDrawingRef.current = true;
       lastPointRef.current = getPosFromClient(e.clientX, e.clientY);
@@ -526,14 +539,39 @@ const Whiteboard = forwardRef<WhiteboardHandle, WhiteboardProps>(
 
     const handlePointerMove = (e: React.PointerEvent<HTMLCanvasElement>) => {
       if (e.pointerType === "touch" || tool === "text") return;
+      if (tool === "region") {
+        if (!marqueeRef.current) return;
+        const m = { ...marqueeRef.current, x1: e.clientX, y1: e.clientY };
+        marqueeRef.current = m;
+        setMarquee(m);
+        return;
+      }
       if (!isDrawingRef.current || !lastPointRef.current) return;
       const curr = getPosFromClient(e.clientX, e.clientY);
       emitStroke(curr);
     };
 
+    const finishRegion = () => {
+      const m = marqueeRef.current;
+      marqueeRef.current = null;
+      setMarquee(null);
+      if (!m) return;
+      const a = getPosFromClient(Math.min(m.x0, m.x1), Math.min(m.y0, m.y1));
+      const b = getPosFromClient(Math.max(m.x0, m.x1), Math.max(m.y0, m.y1));
+      const w = (b.x - a.x) * window.innerWidth;
+      const h = (b.y - a.y) * window.innerHeight;
+      // Ignore a stray click that never became a drag
+      if (w < 12 || h < 12) return;
+      onRegion({ x: a.x, y: a.y, w, h });
+    };
+
     const stopDrawing = (e?: React.PointerEvent<HTMLCanvasElement>) => {
       if (e && e.currentTarget.hasPointerCapture(e.pointerId)) {
         e.currentTarget.releasePointerCapture(e.pointerId);
+      }
+      if (tool === "region") {
+        finishRegion();
+        return;
       }
       isDrawingRef.current = false;
       lastPointRef.current = null;
@@ -621,7 +659,11 @@ const Whiteboard = forwardRef<WhiteboardHandle, WhiteboardProps>(
             left: 0,
             zIndex: 0,
             cursor:
-              tool === "eraser" ? "cell" : tool === "text" ? "text" : "crosshair",
+              tool === "eraser"
+                ? "cell"
+                : tool === "text"
+                  ? "text"
+                  : "crosshair",
             touchAction: "none",
           }}
           onClick={handleCanvasClick}
@@ -634,6 +676,24 @@ const Whiteboard = forwardRef<WhiteboardHandle, WhiteboardProps>(
           onTouchEnd={() => stopDrawing()}
           onTouchCancel={() => stopDrawing()}
         />
+
+        {marquee && (
+          <div
+            aria-hidden="true"
+            style={{
+              position: "fixed",
+              left: Math.min(marquee.x0, marquee.x1),
+              top: Math.min(marquee.y0, marquee.y1),
+              width: Math.abs(marquee.x1 - marquee.x0),
+              height: Math.abs(marquee.y1 - marquee.y0),
+              zIndex: 997,
+              border: "2px dashed rgba(251,191,36,0.9)",
+              background: "rgba(251,191,36,0.08)",
+              borderRadius: 6,
+              pointerEvents: "none"
+            }}
+          />
+        )}
 
         {/*
           The caret is a real input floating over the canvas rather than text

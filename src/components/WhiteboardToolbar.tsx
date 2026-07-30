@@ -30,7 +30,7 @@ import { FONT_STACKS, METALS, metalFor, TEXT_SIZES, type Nib, type TextFont } fr
  * presentation change only, so Session.tsx is untouched.
  */
 
-type Tool = "pen" | "eraser" | "text";
+type Tool = "pen" | "eraser" | "text" | "region";
 
 interface WhiteboardToolbarProps {
   tool: Tool;
@@ -301,6 +301,11 @@ export function WhiteboardToolbar({
           "text",
           "Text tool",
           "M4 7V5h16v2M9 5v14m-2 0h4"
+        )}
+        {toolButton(
+          "region",
+          "Tag an area",
+          "M4 8V6a2 2 0 012-2h2M16 4h2a2 2 0 012 2v2M20 16v2a2 2 0 01-2 2h-2M8 20H6a2 2 0 01-2-2v-2"
         )}
 
         <div className="w-px h-6 bg-zinc-700 mx-0.5" />
