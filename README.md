@@ -1,191 +1,241 @@
 # watchtogether
 
-A real-time peer-to-peer room for up to four people, with video chat, shared media widgets, and a collaborative whiteboard — no login or install.
+A live peer-to-peer workspace for video chat, shared media, drawing and music
+collaboration. Create a room, share its link and work together without an
+account.
 
-Built with React + TypeScript + Vite. Peer connections are handled entirely in the browser via WebRTC (PeerJS). The only external service used is PeerJS Cloud for signaling.
+Rooms support up to four people. Media and collaborative state travel directly
+between participants over WebRTC; PeerJS Cloud is used for signalling.
 
----
+## Current features
 
-## Features
+### Rooms and video
 
-- **Video call** — camera + microphone for up to four participants, with data-only fallback when media is unavailable
-- **Synchronized YouTube** — paste a URL or video ID; play, pause, and seek stay in lock-step for everyone
-- **Collaborative whiteboard** — draw together in real time on the shared canvas background; pen, eraser, 8 colours, 3 brush sizes, clear
-- **Draggable + resizable panels** — video feeds and YouTube widget can be freely repositioned and resized; layout syncs between peers
-- **Resolution-independent** — panel positions and whiteboard strokes are all normalised to viewport fractions, so everything lands correctly regardless of each peer's screen size or DPR
-- **Dictionary room codes** — sessions get a memorable uppercase word (e.g. `THUNDER`) shared via URL param `?room=THUNDER`
-- **No login** — share the link, join, go
+- Up to four participants in a full peer-to-peer mesh
+- Camera and microphone video panels for each participant
+- Data-only participation when camera or microphone access is denied or
+  unavailable
+- Automatic reconnection and room-owner handover when the original host leaves
+- Participant video shortcuts kept in the shared dock
+- Participant count and a clear room-full state for a fifth connection
 
----
+### Infinite collaborative canvas
 
-## How it works
+- Pan and zoom around a shared dot-grid workspace
+- Draw continuously behind and around floating panels
+- Ballpoint, pencil, fountain pen, charcoal, highlighter, neon and eraser tools
+- Adjustable colour, width and nib-specific rendering, including metallic inks
+- Place and re-edit free text directly on the canvas
+- Clear the shared whiteboard
+- Resolution-independent coordinates so content maps between different screen
+  sizes
+- Mouse, touch and mobile Safari interaction support
 
-### Connection model
+### Shared widgets
 
+- **YouTube player** — load links by pasting or dropping them onto the canvas;
+  play, pause and seek state is shared
+- **Record player** — load an audio file into an animated top-down turntable;
+  play, pause and seek state is shared
+- **Mini browser** — enter a URL and render sites that permit iframe embedding
+- **Sticky notes** — switch between text, guitar chord diagrams and tablature;
+  notes can contain multiple chords
+- **Video panels** — one independently movable panel per participant
+
+Widgets can be dragged from their non-interactive surfaces, resized from every
+edge or corner, layered consistently across peers and tagged with a double
+click.
+
+### Sharing and navigation
+
+- A shared dock acts as a set of bookmarks into the canvas
+- Tag, rename, remove and jump to panels without relocating them
+- Ping a dock entry to draw the other participants' attention
+- Hold the canvas to create a position flag with a ripple
+- Select and tag an area, then return to it with a framed zoom
+- Paste plain text, YouTube links and other URLs directly onto the canvas
+- Drop audio files and transfer them to peers in chunks with progress feedback
+
+## Important current limitations
+
+- **Sessions are ephemeral.** There is no application database and nothing is
+  restored after every participant leaves.
+- **Late join state is not hydrated yet.** A person joining an active room does
+  not receive the existing drawing, notes, widgets or dock state created before
+  they connected.
+- **TURN is optional but operationally important.** Direct WebRTC can fail
+  between cellular devices, strict NATs and restrictive corporate networks
+  unless a TURN relay is configured.
+- **Four participants is a deliberate ceiling.** A full mesh creates a direct
+  media connection between every pair and does not scale like an SFU-backed
+  conferencing system.
+- **Mini-browser compatibility depends on the destination site.** Sites using
+  `X-Frame-Options` or restrictive Content Security Policy headers cannot be
+  embedded.
+- **Browser media policies still apply.** iOS and other browsers may require a
+  tap before remote audio can play, and autoplay restrictions can delay a
+  remotely triggered player.
+- Multiple YouTube widgets currently share playback commands; independently
+  controlling several YouTube panels is still roadmap work.
+
+See [ROADMAP.md](ROADMAP.md) for planned persistence, session hydration, music
+mode, mute controls, shapes, images, screen sharing and other open work.
+
+## Connection model
+
+The room owner registers the lower-cased room code as its PeerJS ID. Guests
+connect to that ID, receive the participant roster and establish the remaining
+connections required for a full mesh:
+
+```text
+             Participant A
+              /    |    \
+             /     |     \
+Participant B----- C -----D
 ```
-          Host
-        ╱  │  ╲
- Guest ─ Guest ─ Guest
-```
 
-- The **host** generates a room code word, registers as a PeerJS peer with that ID (lowercased), and waits.
-- Guests visit the shared URL (`?room=WORD`). The host distributes the current roster and the browsers form a full WebRTC mesh, capped at four people.
-- Once connected, application data and media travel directly between browsers. PeerJS Cloud is used for signaling; a configured TURN service may relay WebRTC traffic when a direct route is unavailable.
+Application messages are broadcast once to every open peer connection. Media
+calls and data channels remain direct between browsers. If the room owner
+disconnects, the remaining clients elect a replacement owner so the room code
+continues to work while anyone remains connected.
 
-### Data channel messages
+STUN servers help browsers discover direct routes. A configured TURN server
+relays encrypted WebRTC traffic only when a direct route cannot be established.
 
-Everything synced over the wire is a tagged union (`SyncMessage`):
+## Shared state
 
-| `type`         | Payload                                  | Purpose                             |
-| -------------- | ---------------------------------------- | ----------------------------------- |
-| `load`         | `videoId`                                | Load a new YouTube video            |
-| `play`         | `time`                                   | Seek + play from timestamp          |
-| `pause`        | `time`                                   | Seek + pause at timestamp           |
-| `seek`         | `time`                                   | Seek without changing play state    |
-| `panel-update` | `id`, `state` (normalised 0–1 fractions) | Move/resize/z-order a panel         |
-| `draw`         | `x0 y0 x1 y1 color width` (normalised)   | Whiteboard stroke segment           |
-| `draw-clear`   | —                                        | Clear the whiteboard for both peers |
+The WebRTC data channel carries typed messages for:
 
-Two separate `useYouTubeSync` instances share the same data connection:
+- Panel creation, movement, resizing, stacking and removal
+- YouTube, audio and browser state
+- Whiteboard strokes, text and clearing
+- Sticky-note updates
+- Dock tags, labels and pings
+- Position and bounded-area tags
+- Chunked audio-file transfers
 
-1. **Session.tsx** handles `panel-update`, `draw`, and `draw-clear`.
-2. **YoutubeWidget.tsx** handles `load`, `play`, `pause`, and `seek`.
+Panel geometry and canvas coordinates are normalized before transmission so
+participants with different viewport sizes still share the same logical
+workspace. YouTube and audio playback commands include a wall-clock timestamp
+so receivers can compensate for data-channel transit time.
 
-PeerJS fires `conn.on("data")` once per connection object; each instance sees every message and ignores types it doesn't own.
+## Local development
 
-### YouTube echo prevention
+Requirements:
 
-When a remote `play` or `pause` arrives, calling `seekTo()` + `playVideo()` causes the YouTube IFrame API to fire `onStateChange` events — which would echo back to the remote peer, creating a feedback loop. This is suppressed with a **time-window guard**: `syncUntilRef` is set 500 ms into the future on any remote-triggered command, and all `onStateChange` events fired within that window are silently ignored.
+- Node.js 20 or newer
+- npm
+- A secure browser context for camera and microphone access (`localhost` is
+  accepted by browsers)
 
-### Resolution independence
-
-All values that cross the wire are normalised:
-
-- **Panel positions/sizes** — divided by `innerWidth`/`innerHeight` before sending; multiplied back on receipt using the receiver's own dimensions.
-- **Whiteboard strokes** — `x`/`y` as fractions of viewport; `width` as a fraction of `Math.min(viewport W, H)`.
-- **Canvas DPR** — the `<canvas>` buffer is sized to `innerWidth × devicePixelRatio`, so strokes are sharp on Retina/HiDPI screens.
-
----
-
-## Project structure
-
-```
-src/
-├── App.tsx                    # Top-level router (Home ↔ Session)
-├── pages/
-│   ├── Home.tsx               # Start/join UI
-│   └── Session.tsx            # Session coordinator — owns all shared state
-├── components/
-│   ├── DraggablePanel.tsx     # Controlled drag + resize wrapper (react-draggable)
-│   ├── VideoPanel.tsx         # Single video feed with title bar
-│   ├── YoutubeWidget.tsx      # YouTube player + URL input + sync logic
-│   ├── Whiteboard.tsx         # Full-screen canvas whiteboard
-│   └── WhiteboardToolbar.tsx  # Draggable tool palette (pen/eraser/colour/size)
-├── hooks/
-│   ├── usePeer.ts             # PeerJS lifecycle — media call + data channel
-│   ├── useYouTubePlayer.ts    # Stable YouTube IFrame API wrapper (no react-youtube)
-│   └── useYouTubeSync.ts      # Data channel message router + sender
-├── types/
-│   └── panels.ts              # PanelId, PanelState
-└── utils/
-    ├── roomCode.ts            # Generate / read / write room codes
-    └── wordList.ts            # ~150 dictionary words for room code generation
-```
-
----
-
-## Running locally
+Install dependencies and start Vite:
 
 ```bash
 npm install
 npm run dev
 ```
 
-Open two browser tabs (or two different browsers) — start a session in one, paste the URL in the other.
+Open the displayed local URL, start a session and join it from up to three other
+tabs, browsers or devices using the generated link.
 
-To build for production:
+Available commands:
 
 ```bash
-npm run build
+npm run dev       # development server
+npm run build     # TypeScript check and production build
+npm run lint      # ESLint
+npm run preview   # serve the production build locally
 ```
 
-The output in `dist/` is a fully static site — drop it on Netlify, Vercel, GitHub Pages, or any static host.
+## TURN configuration
 
-### Reliable mobile-to-mobile connections
-
-The PeerJS cloud service handles signaling only. For two phones on cellular or
-restrictive Wi-Fi, configure a TURN relay so WebRTC has a route when a direct
-STUN connection is blocked:
+Copy the example environment file:
 
 ```bash
 cp .env.example .env.local
 ```
 
-Set `VITE_TURN_URLS`, `VITE_TURN_USERNAME`, and `VITE_TURN_CREDENTIAL` using
-values from your TURN provider, then rebuild/redeploy. Prefer a provider that
-supplies both UDP TURN and TLS/TCP TURN on port 443. The app tries direct P2P
-first and uses the relay only when necessary.
+Configure the UDP and TLS/TCP endpoints supplied by your TURN provider:
 
-Because Vite embeds `VITE_*` values into the browser bundle, use short-lived
-TURN credentials in production where your provider supports them. Do not put a
-TURN provider's account/API secret in these variables.
+```dotenv
+VITE_TURN_URLS=turn:turn.example.com:3478?transport=udp,turns:turn.example.com:443?transport=tcp
+VITE_TURN_USERNAME=replace-with-turn-username
+VITE_TURN_CREDENTIAL=replace-with-turn-credential
+```
 
----
+Vite embeds `VITE_*` values in the client bundle. Do not place a provider's
+account password or API secret in these variables. Prefer scoped or short-lived
+TURN credentials when the provider supports them.
 
-## Tech stack
+## Persistence and Supabase
 
-| Library               | Purpose                    |
-| --------------------- | -------------------------- |
-| React 18 + TypeScript | UI + type safety           |
-| Vite 8                | Build tooling              |
-| Tailwind CSS v4       | Styling                    |
-| PeerJS                | WebRTC signaling + helpers |
-| react-draggable       | Panel drag behaviour       |
+Supabase is **not currently wired into the application**. A connected Supabase
+project and an empty or generated `supabase/` directory do not make sessions
+persistent by themselves.
 
-No backend required. PeerJS Cloud is used only for the initial WebRTC handshake (STUN/TURN + signaling); all media and data flows directly between browsers.
+Persistence will require:
 
-      tseslint.configs.stylisticTypeChecked,
+- A schema and migrations, normally stored under `supabase/migrations/`
+- Client configuration and public project environment variables
+- A session snapshot format
+- Authorization and room access policies
+- Hydration on initial join and reconnection
 
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
+The intended architecture is for live collaboration to remain P2P while the
+database stores durable snapshots in the background.
 
-},
-])
+## Production deployment
 
-````
+`npm run build` writes the static production application to `dist/`. It can be
+served by Netlify, Vercel or another static host.
 
-You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom) for React-specific lint rules:
+Production hosting must use HTTPS for camera, microphone and WebRTC browser
+APIs. Configure the TURN environment variables before building because Vite
+injects them at build time.
 
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
+No application backend is required for the current ephemeral version, but the
+app still depends on third-party network services such as PeerJS signalling,
+configured STUN/TURN infrastructure, YouTube and any pages opened in the mini
+browser.
 
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
-````
+## Project structure
+
+```text
+src/
+├── components/
+│   ├── AudioPlayer.tsx        # shared record-player widget
+│   ├── BrowserWidget.tsx      # synchronized iframe browser
+│   ├── Dock.tsx               # canvas bookmarks and participant shortcuts
+│   ├── DraggablePanel.tsx     # movement, resizing and tag gestures
+│   ├── StickyNote.tsx         # text, chord and tab notes
+│   ├── VideoPanel.tsx         # local and remote video
+│   ├── Whiteboard.tsx         # drawing, text and region selection
+│   ├── WhiteboardToolbar.tsx  # canvas tools and properties
+│   └── YoutubeWidget.tsx      # YouTube loading and playback sync
+├── hooks/
+│   ├── usePeer.ts             # four-person PeerJS mesh and reconnection
+│   ├── useYouTubePlayer.ts    # YouTube IFrame API wrapper
+│   └── useYouTubeSync.ts      # shared data-channel message router
+├── pages/
+│   ├── Home.tsx               # create and join flow
+│   └── Session.tsx            # canvas and shared-session coordinator
+├── types/
+│   └── panels.ts
+└── utils/
+    ├── brush.ts
+    ├── fileTransfer.ts
+    ├── roomCode.ts
+    └── wordList.ts
+```
+
+## Technology
+
+| Technology | Role |
+| --- | --- |
+| React 19 | User interface |
+| TypeScript 6 | Static typing |
+| Vite 8 | Development and production builds |
+| Tailwind CSS 4 | Styling |
+| PeerJS / WebRTC | Signalling helpers, media and data channels |
+| YouTube IFrame API | Embedded video playback |
+| react-draggable | Panel movement |
