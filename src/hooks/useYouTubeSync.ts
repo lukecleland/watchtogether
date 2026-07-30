@@ -1,6 +1,6 @@
 import { useCallback, useRef } from 'react';
 import type { DataConnection } from 'peerjs';
-import type { PanelState } from '../types/panels';
+import type { NoteContent, PanelState } from '../types/panels';
 
 /**
  * useYouTubeSync — binds a message handler to a PeerJS DataConnection and
@@ -62,6 +62,11 @@ export type SyncMessage =
 			dataB64?: string;
 	  }
 	| { type: 'remove-panel'; id: string }
+	/** A sticky note was spawned, carrying its starting contents. */
+	| { type: 'spawn-note'; id: string; state: PanelState; note: NoteContent }
+	/** Note contents changed. Sent whole rather than as a diff: a note is small,
+	 *  and last-write-wins is the right outcome for two people editing one. */
+	| { type: 'note-update'; id: string; note: NoteContent }
 	| { type: 'position-tag'; id: string; x: number; y: number; label: string }
 	| { type: 'position-tag-remove'; id: string }
 	/** A panel was tagged; add a pulsing chip to the peer's dock. `label` is
