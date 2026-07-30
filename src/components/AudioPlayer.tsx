@@ -491,10 +491,19 @@ export function AudioPlayer({
                         grooves and the paper label — name and all. */}
                     {/* `animation: none` (rather than paused) when stopped, so
                         the label settles upright and the name stays legible —
-                        a record frozen mid-spin leaves it upside down. */}
+                        a record frozen mid-spin leaves it upside down.
+
+                        The rotation origin is pinned to the spindle in
+                        view-box units, inline. Safari and Chrome disagree on
+                        `transform-box: fill-box` for SVG groups — Chrome spun
+                        this around the wrong point, wobbling the whole deck. */}
                     <g
                       className="deck-spin"
-                      style={isPlaying ? undefined : { animation: "none" }}
+                      style={{
+                        transformBox: "view-box",
+                        transformOrigin: `${HUB.x}px ${HUB.y}px`,
+                        ...(isPlaying ? {} : { animation: "none" }),
+                      }}
                     >
                       <circle cx={HUB.x} cy={HUB.y} r={R_PLATTER} fill={`url(#platter-${id})`} />
                       {STROBE_DOTS.map((dot, i) => (
