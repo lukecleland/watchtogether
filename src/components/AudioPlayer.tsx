@@ -1,7 +1,7 @@
 import { useState, useRef, useCallback, useEffect } from "react";
 import { DockButton } from "./Dock";
 import { useYouTubeSync, type SyncMessage } from "../hooks/useYouTubeSync";
-import type { DataConnection } from "peerjs";
+import type { RoomDataConnection } from "../hooks/usePeer";
 
 function formatTime(seconds: number): string {
   if (!isFinite(seconds)) return "0:00";
@@ -23,7 +23,7 @@ export function AudioPlayer({
   onFileChosen,
 }: {
   id: string;
-  dataConnection: DataConnection | null;
+  dataConnection: RoomDataConnection | null;
   initialFile?: File;
   onClose?: () => void;
   /** 0–1 multiplier from spatial positioning — updated by the parent on every canvas transform change. */

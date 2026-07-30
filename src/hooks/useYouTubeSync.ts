@@ -1,5 +1,5 @@
-import { useCallback, useRef } from 'react';
-import type { DataConnection } from 'peerjs';
+import { useCallback, useEffect, useEffectEvent } from 'react';
+import type { RoomDataConnection } from './usePeer';
 import type { NoteContent, PanelState } from '../types/panels';
 
 /**
@@ -111,7 +111,7 @@ export type SyncMessage =
 	| { type: 'file-abort'; transferId: string };
 
 interface UseYouTubeSyncOptions {
-	dataConnection: DataConnection | null;
+	dataConnection: RoomDataConnection | null;
 	onRemoteSync: (msg: SyncMessage) => void;
 }
 
@@ -120,19 +120,16 @@ interface UseYouTubeSyncResult {
 }
 
 export function useYouTubeSync({ dataConnection, onRemoteSync }: UseYouTubeSyncOptions): UseYouTubeSyncResult {
-	const onRemoteSyncRef = useRef(onRemoteSync);
-	onRemoteSyncRef.current = onRemoteSync;
+	const handleRemoteData = useEffectEvent((raw: unknown) => {
+		onRemoteSync(raw as SyncMessage);
+	});
 
-	// Register the data handler when the component mounts/connection changes
-	// We use useRef to track if we've already bound the handler
-	const boundRef = useRef<DataConnection | null>(null);
-
-	if (dataConnection && boundRef.current !== dataConnection) {
-		boundRef.current = dataConnection;
-		dataConnection.on('data', raw => {
-			onRemoteSyncRef.current(raw as SyncMessage);
-		});
-	}
+	useEffect(() => {
+		if (!dataConnection) return;
+		const listener = (raw: unknown) => handleRemoteData(raw);
+		dataConnection.on('data', listener);
+		return () => dataConnection.off('data', listener);
+	}, [dataConnection]);
 
 	const sendSync = useCallback(
 		(msg: SyncMessage) => {

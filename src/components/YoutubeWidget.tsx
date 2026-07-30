@@ -2,7 +2,7 @@ import { useState, useRef, useCallback, useEffect } from "react";
 import { useYouTubeSync, type SyncMessage } from "../hooks/useYouTubeSync";
 import { useYouTubePlayer } from "../hooks/useYouTubePlayer";
 import { DockButton } from "./Dock";
-import type { DataConnection } from "peerjs";
+import type { RoomDataConnection } from "../hooks/usePeer";
 
 /**
  * YoutubeWidget — YouTube player with URL input and bidirectional sync.
@@ -22,7 +22,7 @@ import type { DataConnection } from "peerjs";
  */
 
 interface YoutubeWidgetProps {
-  dataConnection: DataConnection | null;
+  dataConnection: RoomDataConnection | null;
   initialVideoId?: string;
   onClose?: () => void;
   /** 0–1 spatial volume multiplier updated by the parent on every canvas transform change. */

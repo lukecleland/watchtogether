@@ -131,6 +131,16 @@ function swapFixedId(id: string): string {
 	return id;
 }
 
+const REMOTE_PANEL_PREFIX = 'remote-peer:';
+
+function remotePanelId(peerId: string): string {
+	return `${REMOTE_PANEL_PREFIX}${peerId}`;
+}
+
+function peerIdFromPanelId(id: string): string | null {
+	return id.startsWith(REMOTE_PANEL_PREFIX) ? id.slice(REMOTE_PANEL_PREFIX.length) : null;
+}
+
 // Shared YouTube URL parser (used for background URL drops)
 function parseYouTubeVideoId(input: string): string | null {
 	try {
@@ -151,6 +161,7 @@ export function Session({ roomCode, isHost }: SessionProps) {
 	const [localStream, setLocalStream] = useState<MediaStream | null>(null);
 	const [mediaError, setMediaError] = useState<string | null>(null);
 	const [fixedPanels, setFixedPanels] = useState<Record<PanelId, PanelState>>(defaultFixedPanels);
+	const [remotePanelStates, setRemotePanelStates] = useState<Record<string, PanelState>>({});
 	const [dynamicPanels, setDynamicPanels] = useState<DynamicPanel[]>([]);
 	const [positionTags, setPositionTags] = useState<PositionTag[]>([]);
 	const positionTagsRef = useRef<PositionTag[]>([]);
@@ -226,12 +237,28 @@ export function Session({ roomCode, isHost }: SessionProps) {
 	const activeColor = wbNib === 'highlighter' ? wbHighlightColor : wbColor;
 	const setActiveColor = (c: string) => (wbNib === 'highlighter' ? setWbHighlightColor(c) : setWbColor(c));
 
-	const { remoteStream, dataConnection, status, error } = usePeer({
+	const { remoteStreams, dataConnection, participantCount, status, error } = usePeer({
 		roomCode,
 		isHost,
 		localStream
 	});
 	dataConnectionRef.current = dataConnection;
+
+	useEffect(() => {
+		setRemotePanelStates(prev => {
+			const next: Record<string, PanelState> = {};
+			remoteStreams.forEach(({ peerId }, index) => {
+				next[peerId] =
+					prev[peerId] ?? {
+						...fixedPanels.remote,
+						x: fixedPanels.remote.x + index * 28,
+						y: fixedPanels.remote.y + index * 28,
+						z: fixedPanels.remote.z + index
+					};
+			});
+			return next;
+		});
+	}, [remoteStreams, fixedPanels.remote]);
 
 	// Stop a chip pulsing — it's been seen
 	const acknowledgePulse = useCallback((id: string) => {
@@ -287,7 +314,13 @@ export function Session({ roomCode, isHost }: SessionProps) {
 		if ('state' in msg) noteRemoteZ(msg.state.z);
 
 		if (msg.type === 'panel-update') {
-			if (msg.id === 'local' || msg.id === 'remote') {
+			const remotePeerId = peerIdFromPanelId(msg.id);
+			if (remotePeerId) {
+				setRemotePanelStates(prev => ({
+					...prev,
+					[remotePeerId]: denormalisePanel(msg.state)
+				}));
+			} else if (msg.id === 'local' || msg.id === 'remote') {
 				// Swap local ↔ remote so each user's "You" drives the other's "Guest"
 				const targetId: PanelId = msg.id === 'local' ? 'remote' : 'local';
 				setFixedPanels(prev => ({
@@ -590,7 +623,8 @@ export function Session({ roomCode, isHost }: SessionProps) {
 		acknowledgePulse(id);
 		const positionTag = positionTags.find(tag => tag.id === id);
 		const isFixed = id === 'local' || id === 'remote';
-		const panel = isFixed ? null : dynamicPanels.find(p => p.id === id);
+		const remotePeerId = peerIdFromPanelId(id);
+		const panel = isFixed || remotePeerId ? null : dynamicPanels.find(p => p.id === id);
 		const target = positionTag
 			? {
 					x: positionTag.x,
@@ -601,10 +635,12 @@ export function Session({ roomCode, isHost }: SessionProps) {
 			  }
 			: isFixed
 				? fixedPanels[id]
-				: panel?.state;
+				: remotePeerId
+					? remotePanelStates[remotePeerId]
+					: panel?.state;
 		if (!target) return;
 
-		const type: DockEntry['type'] = positionTag ? 'position' : isFixed ? id : (panel?.type ?? 'youtube');
+		const type: DockEntry['type'] = positionTag ? 'position' : remotePeerId ? 'remote' : isFixed ? id : (panel?.type ?? 'youtube');
 		const vw = window.innerWidth;
 		const vh = window.innerHeight;
 
@@ -711,6 +747,12 @@ export function Session({ roomCode, isHost }: SessionProps) {
 		if (id === 'local' || id === 'remote') {
 			const auto = id === 'local' ? 'You' : 'Guest';
 			return [{ id, type: id, label: custom ?? auto, renamed: !!custom, pulsing }];
+		}
+		const remotePeerId = peerIdFromPanelId(id);
+		if (remotePeerId) {
+			const index = remoteStreams.findIndex(remote => remote.peerId === remotePeerId);
+			if (index < 0) return [];
+			return [{ id, type: 'remote', label: custom ?? `Guest ${index + 1}`, renamed: !!custom, pulsing }];
 		}
 		const panel = dynamicPanels.find(p => p.id === id);
 		if (!panel) return [];
@@ -1196,7 +1238,7 @@ export function Session({ roomCode, isHost }: SessionProps) {
 		idle: 'Setting up…',
 		connecting: 'Connecting…',
 		waiting: 'Waiting for guest…',
-		connected: 'Connected',
+		connected: `Connected · ${participantCount}/4`,
 		error: ''
 	};
 
@@ -1470,12 +1512,38 @@ export function Session({ roomCode, isHost }: SessionProps) {
 					</DraggablePanel>
 				)}
 
-				{status === 'connected' && (
-					<DraggablePanel state={fixedPanels.remote} {...makePanelHandlers('remote')} onToggleDock={() => toggleDock('remote')} minWidth={200} minHeight={120} scale={canvas.scale} className="z-10">
-						{zoomTagHandle('remote', 'Guest')}
-						<VideoPanel stream={remoteStream} label="Guest" docked={dockedIds.includes('remote')} onToggleDock={() => toggleDock('remote')} />
-					</DraggablePanel>
-				)}
+				{remoteStreams.map(({ peerId, stream }, index) => {
+					const state = remotePanelStates[peerId];
+					if (!state) return null;
+					const label = `Guest ${index + 1}`;
+					const panelId = remotePanelId(peerId);
+					return (
+						<DraggablePanel
+							key={peerId}
+							state={state}
+							onLocalUpdate={next => setRemotePanelStates(prev => ({ ...prev, [peerId]: next }))}
+							onSyncUpdate={next => sendPanelUpdate(panelId, next)}
+							onBringToFront={() => {
+								const z = ++topZRef.current;
+								const next = { ...state, z };
+								setRemotePanelStates(prev => ({ ...prev, [peerId]: next }));
+								sendPanelUpdate(panelId, next);
+							}}
+							onToggleDock={() => toggleDock(panelId)}
+							minWidth={200}
+							minHeight={120}
+							scale={canvas.scale}
+							className="z-10">
+							{zoomTagHandle(panelId, label)}
+							<VideoPanel
+								stream={stream}
+								label={label}
+								docked={dockedIds.includes(panelId)}
+								onToggleDock={() => toggleDock(panelId)}
+							/>
+						</DraggablePanel>
+					);
+				})}
 
 				{dynamicPanels.map(panel => (
 					<DraggablePanel
