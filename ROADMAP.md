@@ -62,6 +62,94 @@ added. So the work is split:
       - Either way, the other person should always know: a visible recording
         indicator on both sides, synced over the data channel.
 
+### Canvas tools
+
+The tool rail is currently pen, eraser, eight colour swatches, three sizes and
+clear — about fifteen controls in a flat strip. Everything below roughly triples
+what it holds, so the restructure comes first or we build a bad UI one good
+feature at a time. Items are grouped the way they'd ship: one push each.
+
+- [ ] **1 · Restructure the tool rail** — grouped tools with fly-out panels
+      instead of a flat list. Pen opens its nib choice, shapes open shape choice,
+      the eight swatches collapse to a single swatch showing the current colour.
+      Deliberately no new features in this one, so it can be judged as a UI
+      change on its own.
+
+      Decided while mocking it up: the rail becomes **fixed to the left edge**
+      rather than a floating draggable panel. On narrow screens it narrows and
+      overflows into a "more" button, and fly-outs become a bottom sheet — which
+      has to sit *above* the dock, since both want the bottom of the screen.
+
+- [ ] **2 · Brush engine — nibs, colour picker, metallics** — one push because
+      all three touch the same stroke rendering and the same sync message;
+      splitting them guarantees conflicts.
+      - Nibs: ballpoint (today's behaviour), fountain pen (width from stroke
+        speed), pencil, charcoal, highlighter, neon.
+      - **Highlighter carries its own colour set** rather than the current pen
+        colour — highlighting in white is useless.
+      - Colour: one swatch opening a picker with the standard palette, recents,
+        and an arbitrary-colour input.
+      - Metallics (gold, silver, copper, bronze) rendered as a gradient
+        *perpendicular* to each segment — dark edge, bright core, dark edge — so
+        they read as metal rather than as flat yellow. Sync as a token like
+        `metal:gold`, the same shape as the existing `__eraser__` sentinel.
+
+      ⚠️ Pencil and charcoal texture **must be seeded from stroke coordinates**.
+      Strokes are re-rendered on every pan and zoom, so unseeded randomness makes
+      the grain reshuffle and the whole board visibly crawl.
+
+- [ ] **3 · Region tags** — extends the position tags that already exist. A
+      long-press currently drops a point tag; this adds *drag a box* to tag an
+      area. Because a region has bounds it can zoom-to-fit on jump (a point can
+      only preserve the current scale) and it draws a frame around what was
+      tagged. The motivating case is handwriting: strokes aren't panels, so a
+      region is the only way to bookmark something you drew.
+
+- [ ] **4 · Sticky notes** — text as canvas objects: draggable, resizable,
+      colour choice, synced. Reuses `DraggablePanel` and the spawn machinery, and
+      satisfies the "free-type text" item above. Best value-per-effort here.
+
+- [ ] **5 · Music stickies** — variants of the sticky note, aimed at the way this
+      app actually gets used.
+      - **Chord diagrams** — the six-by-five grid with dots for finger positions.
+        Trivial SVG, and the most direct way to say "play *this*" remotely.
+      - **Guitar tab** — a monospace text area with `e B G D A E` down the side.
+        No library needed.
+      - **Manuscript paper** — a sticky pre-printed with blank staves (or blank
+        tab) that you **handwrite on with the existing pen**. Cheapest of the
+        three and possibly the most used: writing a melody by hand mid-session is
+        faster than typing notation, and the pen is already there.
+      - *Parked:* full standard notation via `abcjs`. Technically fine, but it
+        means authoring ABC text (`|:G2AB c2BA:|`) live — a beautiful feature
+        nobody would touch unless they already read and write ABC.
+
+- [ ] **6 · Shapes** — rectangle, ellipse, line, arrow, with shift-constrain.
+      Arrows especially: pointing at things is the commonest annotation need and
+      freehand arrows always look scrappy. Depends on 1.
+
+- [ ] **7 · Images — stickers, drop and paste** — emoji stickers, custom image
+      upload, drag-drop, and ⌘V from the clipboard. One push because they share
+      an ingest path, and that path needs building: downscale to ~512px and
+      re-encode before sending, since the current base64-over-data-channel
+      transfer will choke on a phone photo. Also closes the image-drop item.
+
+- [ ] **8 · Laser pointer** — a trail that fades after about a second and is
+      never stored. For "look, *here*" mid-conversation without permanently
+      marking the board. Fully independent of everything else.
+
+- [ ] **9 · Eyedropper and an explicit pan/select tool** — pick a colour off the
+      canvas; and a real cursor-mode button, since space-to-pan is undiscoverable
+      and has no touch equivalent.
+
+- [ ] **10 · Metronome** — a shared, synced click track. Not a toolbar tool but a
+      panel like YouTube and audio.
+
+> **Worth noting the direction.** A metronome, guitar tab, chord diagrams, the
+> audio player and the video call together stop being a watch-party feature set
+> and start being a **remote jamming tool**. That may be worth deciding on
+> deliberately rather than arriving at — it would change what's worth building
+> next.
+
 ### Additional suggestions
 
 From a read-through of the current code — a mix of gaps, quick wins and one
@@ -94,6 +182,10 @@ outright bug.
       for a watch-together app and stays fully P2P.
 - [ ] **Whiteboard undo** — the only recovery today is clear-everything. The
       stroke list is already held in memory, so undo-last-stroke is feasible.
+      **Needs a decision first:** on a shared board, does undo remove *your* last
+      stroke or the *last stroke anyone made*? Per-user is almost certainly right
+      — global undo lets one person erase the other's work — but that needs
+      per-stroke ownership, which doesn't exist yet.
 - [x] **Reconnect handling** — done. `usePeer` now recovers a dropped connection
       and re-establishes the room role rather than the status badge going quiet.
 - [x] **Synced audio playback** — done. Audio panels share play / pause / seek
