@@ -35,12 +35,12 @@ import type { NoteContent, PanelState } from '../types/panels';
  */
 export type SyncMessage =
 	| { type: 'load'; videoId: string }
-	| { type: 'play'; time: number }
-	| { type: 'pause'; time: number }
-	| { type: 'seek'; time: number }
-	| { type: 'audio-play'; id: string; time: number }
-	| { type: 'audio-pause'; id: string; time: number }
-	| { type: 'audio-seek'; id: string; time: number }
+	| { type: 'play'; time: number; at?: number }
+	| { type: 'pause'; time: number; at?: number }
+	| { type: 'seek'; time: number; at?: number }
+	| { type: 'audio-play'; id: string; time: number; at?: number }
+	| { type: 'audio-pause'; id: string; time: number; at?: number }
+	| { type: 'audio-seek'; id: string; time: number; at?: number; playing?: boolean }
 	| { type: 'panel-update'; id: string; state: PanelState }
 	| {
 			type: 'draw';
