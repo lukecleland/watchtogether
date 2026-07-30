@@ -57,7 +57,8 @@ body {
 }
 
 .position-tag-ripple {
-  animation: position-tag-ripple 1.2s ease-out 2;
+  opacity: 0;
+  animation: position-tag-ripple 1.2s ease-out 2 forwards;
 }
 
 @media (prefers-reduced-motion: reduce) {

@@ -63,6 +63,7 @@ export type SyncMessage =
 	  }
 	| { type: 'remove-panel'; id: string }
 	| { type: 'position-tag'; id: string; x: number; y: number; label: string }
+	| { type: 'position-tag-remove'; id: string }
 	/** A panel was tagged; add a pulsing chip to the peer's dock. `label` is
 	 *  sent only when the tagger has given it a custom name — automatic labels
 	 *  (video title, file name, numbering) are derived identically on both sides. */

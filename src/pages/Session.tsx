@@ -292,6 +292,9 @@ export function Session({ roomCode, isHost }: SessionProps) {
 			setPositionTags(prev => (prev.some(item => item.id === tag.id) ? prev : [...prev, tag]));
 			setDockedIds(prev => (prev.includes(tag.id) ? prev : [...prev, tag.id]));
 			startPulse(tag.id);
+		} else if (msg.type === 'position-tag-remove') {
+			setPositionTags(prev => prev.filter(tag => tag.id !== msg.id));
+			forgetPanel(msg.id);
 		} else if (msg.type === 'dock-tag') {
 			// Same perspective swap as panel-update: their "You" is our "Guest"
 			const id = swapFixedId(msg.id);
@@ -390,6 +393,16 @@ export function Session({ roomCode, isHost }: SessionProps) {
 		}
 		sendSync({ type: 'dock-tag', id, ...(customLabels[id] ? { label: customLabels[id] } : {}) });
 		setDockedIds(prev => (prev.includes(id) ? prev : [...prev, id]));
+	};
+
+	const removeDockEntry = (id: string) => {
+		if (positionTags.some(tag => tag.id === id)) {
+			setPositionTags(prev => prev.filter(tag => tag.id !== id));
+			forgetPanel(id);
+			sendSync({ type: 'position-tag-remove', id });
+			return;
+		}
+		toggleDock(id);
 	};
 
 	// Fly the viewport so the given panel sits in the middle of the screen at a
@@ -1052,8 +1065,11 @@ export function Session({ roomCode, isHost }: SessionProps) {
 						style={{ left: tag.x, top: tag.y }}
 						title={customLabels[tag.id] ?? tag.label}>
 						<span className="position-tag-ripple absolute left-1/2 bottom-0 w-5 h-5 -translate-x-1/2 translate-y-1/2 rounded-full border-2 border-amber-400" />
-						<svg className="relative w-7 h-9 text-amber-400 drop-shadow-lg" viewBox="0 0 24 32" fill="currentColor">
-							<path d="M5 1a1 1 0 011 1v2h12a1 1 0 01.8 1.6L16 9l2.8 3.4a1 1 0 01-.8 1.6H7v16a1 1 0 11-2 0V1z" />
+						<svg className="relative w-6 h-8 drop-shadow-lg" viewBox="0 0 24 32" aria-hidden="true">
+							<path d="M12 4v23" stroke="#fbbf24" strokeWidth="2.5" strokeLinecap="round" />
+							<path d="M12 5h8l-2.5 4L20 13h-8z" fill="#fbbf24" stroke="#f59e0b" strokeWidth="0.75" strokeLinejoin="round" />
+							<circle cx="12" cy="28" r="3.25" fill="#fbbf24" />
+							<circle cx="12" cy="28" r="1.25" fill="#18181b" />
 						</svg>
 					</div>
 				))}
@@ -1104,7 +1120,7 @@ export function Session({ roomCode, isHost }: SessionProps) {
 			</div>
 
 			{/* Dock — fixed overlay above the canvas; shortcuts back to docked panels */}
-			<Dock entries={dockEntries} onJump={jumpToPanel} onRemove={toggleDock} onRename={renameDockEntry} />
+			<Dock entries={dockEntries} onJump={jumpToPanel} onRemove={removeDockEntry} onRename={renameDockEntry} />
 		</div>
 	);
 }
