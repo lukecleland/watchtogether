@@ -52,6 +52,12 @@ function parseVideoId(input: string): string | null {
   return null;
 }
 
+/** Project a playing media position onto this client's wall clock. */
+function currentSyncedTime(time: number, sentAt?: number): number {
+  if (!sentAt) return time;
+  return time + Math.max(0, Date.now() - sentAt) / 1000;
+}
+
 export function YoutubeWidget({
   dataConnection,
   initialVideoId,
@@ -96,8 +102,9 @@ export function YoutubeWidget({
       // Suppress all state changes fired within the remote-sync window.
       if (Date.now() < syncUntilRef.current) return;
       const time = getCurrentTime();
-      if (state === 1) sendSyncRef.current({ type: "play", time });
-      if (state === 2) sendSyncRef.current({ type: "pause", time });
+      const at = Date.now();
+      if (state === 1) sendSyncRef.current({ type: "play", time, at });
+      if (state === 2) sendSyncRef.current({ type: "pause", time, at });
     },
     [],
   );
@@ -129,7 +136,7 @@ export function YoutubeWidget({
         loadVideo(msg.videoId);
       } else if (msg.type === "play") {
         syncUntilRef.current = Date.now() + 500;
-        seekTo(msg.time);
+        seekTo(currentSyncedTime(msg.time, msg.at));
         playVideo();
       } else if (msg.type === "pause") {
         syncUntilRef.current = Date.now() + 500;

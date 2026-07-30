@@ -64,6 +64,12 @@ function labelFontSize(name: string): number {
   return 6.5;
 }
 
+/** Project a playing media position onto this client's wall clock. */
+function currentSyncedTime(time: number, sentAt?: number): number {
+  if (!sentAt) return time;
+  return time + Math.max(0, Date.now() - sentAt) / 1000;
+}
+
 export function AudioPlayer({
   id,
   dataConnection,
@@ -122,9 +128,17 @@ export function AudioPlayer({
       const audio = audioRef.current;
       if (!audio || !audio.src) return;
       syncUntilRef.current = Date.now() + 500;
+      const requestedTime =
+        message.type === "audio-play" ||
+        (message.type === "audio-seek" && message.playing)
+          ? currentSyncedTime(message.time, message.at)
+          : message.time;
       audio.currentTime = Math.max(
         0,
-        Math.min(message.time, Number.isFinite(audio.duration) ? audio.duration : message.time),
+        Math.min(
+          requestedTime,
+          Number.isFinite(audio.duration) ? audio.duration : requestedTime,
+        ),
       );
       setCurrentTime(audio.currentTime);
 
@@ -224,7 +238,13 @@ export function AudioPlayer({
     const t = parseFloat(e.target.value);
     audio.currentTime = t;
     setCurrentTime(t);
-    sendSync({ type: "audio-seek", id, time: t });
+    sendSync({
+      type: "audio-seek",
+      id,
+      time: t,
+      at: Date.now(),
+      playing: !audio.paused,
+    });
   };
 
   const handleVolume = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -252,6 +272,7 @@ export function AudioPlayer({
           type: "audio-play",
           id,
           time: audio.currentTime,
+          at: Date.now(),
         });
       }
     };
@@ -262,6 +283,7 @@ export function AudioPlayer({
           type: "audio-pause",
           id,
           time: audio.currentTime,
+          at: Date.now(),
         });
       }
     };
