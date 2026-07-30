@@ -31,3 +31,20 @@ export const METALS: Record<string, [string, string, string]> = {
 export function metalFor(color: string): [string, string, string] | null {
   return color.startsWith("metal:") ? (METALS[color.slice(6)] ?? null) : null;
 }
+
+/** Typefaces offered for canvas text. */
+export type TextFont = "sans" | "serif" | "mono" | "hand";
+
+export const FONT_STACKS: Record<TextFont, string> = {
+  sans: 'ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif',
+  serif: 'ui-serif, Georgia, "Times New Roman", serif',
+  mono: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
+  hand: '"Bradley Hand", "Segoe Script", "Comic Sans MS", cursive'
+};
+
+/** Text sizes in raw pixels, normalised on the way out like brush widths are. */
+export const TEXT_SIZES = [
+  { label: "S", value: 18 },
+  { label: "M", value: 30 },
+  { label: "L", value: 52 }
+];
