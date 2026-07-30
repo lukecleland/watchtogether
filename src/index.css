@@ -30,15 +30,14 @@ body {
   }
 }
 
-.record-vinyl {
-  background:
-    repeating-radial-gradient(
-      circle,
-      #111 0,
-      #111 2px,
-      #27272a 3px,
-      #111 4px
-    );
+/*
+ * The record player's spinning parts — an SVG group holding the platter,
+ * strobe dots, vinyl and label, so the whole stack turns as one piece.
+ * 1.8s per revolution ≈ 33⅓ RPM, the speed the label claims.
+ */
+.deck-spin {
+  transform-box: fill-box;
+  transform-origin: center;
   animation: record-spin 1.8s linear infinite;
 }
 
@@ -85,7 +84,7 @@ body {
     animation: none;
   }
 
-  .record-vinyl {
+  .deck-spin {
     animation: none;
   }
 }
