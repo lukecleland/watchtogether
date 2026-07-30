@@ -769,6 +769,72 @@ export function Session({ roomCode, isHost }: SessionProps) {
 		};
 	}, []);
 
+	// ── Paste onto the canvas ────────────────────────────────────────────────
+	// Whatever is on the clipboard lands where the pointer is, as the nearest
+	// sensible thing: a YouTube link becomes a player, any other link becomes a
+	// browser panel, and plain text becomes canvas text.
+	//
+	// Images are deliberately not handled yet. There is no image support on the
+	// canvas, and pasting a screengrab would hit the same wall the audio drop
+	// already does — the whole file base64'd into a single data-channel message.
+	// That wants the chunked transfer work first, which stickers and image drop
+	// both need too.
+	const pointerRef = useRef({ x: 0, y: 0 });
+	useEffect(() => {
+		const onPointer = (e: PointerEvent) => {
+			pointerRef.current = { x: e.clientX, y: e.clientY };
+		};
+		window.addEventListener('pointermove', onPointer);
+		return () => window.removeEventListener('pointermove', onPointer);
+	}, []);
+
+	useEffect(() => {
+		const onPaste = (e: ClipboardEvent) => {
+			// Never hijack a paste aimed at a note, the rename box or a URL bar.
+			// The target is only an Element when something is focused — a paste
+			// with focus on the document itself reports the window.
+			const el = e.target instanceof Element ? e.target : null;
+			if (el?.closest('input, textarea, [contenteditable="true"]')) return;
+
+			const raw = e.clipboardData?.getData('text')?.trim();
+			if (!raw) return;
+			e.preventDefault();
+
+			// Drop it where the pointer is; fall back to the middle of the screen
+			// when pasted by keyboard without the mouse having moved.
+			const { x, y } = pointerRef.current;
+			const px = x || window.innerWidth / 2;
+			const py = y || window.innerHeight / 2;
+
+			const videoId = parseYouTubeVideoId(raw);
+			if (videoId) {
+				spawnPanel('youtube', px, py, { initialVideoId: videoId });
+				return;
+			}
+
+			if (/^https?:\/\//i.test(raw)) {
+				spawnPanel('browser', px, py, { initialUrl: raw });
+				return;
+			}
+
+			// Anything else is words: place it as canvas text
+			const item: WhiteboardText = {
+				kind: 'text',
+				id: crypto.randomUUID(),
+				x: (px - canvasStateRef.current.x) / canvasStateRef.current.scale / window.innerWidth,
+				y: (py - canvasStateRef.current.y) / canvasStateRef.current.scale / window.innerHeight,
+				text: raw.split('\n')[0].slice(0, 200),
+				color: activeColor,
+				size: wbTextSize / Math.min(window.innerWidth, window.innerHeight),
+				font: wbFont
+			};
+			whiteboardRef.current?.drawText(item);
+			handleWbText(item);
+		};
+		window.addEventListener('paste', onPaste);
+		return () => window.removeEventListener('paste', onPaste);
+	});
+
 	// Wheel → zoom toward cursor (non-passive so we can preventDefault)
 	useEffect(() => {
 		const onWheel = (e: WheelEvent) => {
