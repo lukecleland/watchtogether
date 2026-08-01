@@ -4,15 +4,18 @@ import { useEffect, useRef, useState } from "react";
  * SummonButton — pull someone into this room through whatever app you'd
  * normally message them in.
  *
- * ## Why a share sheet rather than our own buttons
- * `navigator.share()` opens the device's own share sheet, which already lists
- * every messaging app the user actually has installed and already knows their
- * contacts. One call covers WhatsApp, Messages, Mail, Signal and the rest,
- * with nothing to keep up to date as people change apps.
+ * ## Two ways in, chosen by device rather than by API support
+ * On a phone, `navigator.share()` opens the device's own share sheet, which
+ * lists every messaging app installed and already knows the user's contacts.
+ * One call covers WhatsApp, Messages, Mail, Signal and the rest, with nothing
+ * to keep up to date as people change apps.
  *
- * Where it isn't supported — Firefox, and desktop browsers generally — we fall
- * back to a small menu of explicit links. Those cover the common cases without
- * pretending to be the whole address book.
+ * Everywhere else we show our own short menu. Note that this is *not* simply a
+ * fallback for browsers lacking the API: desktop Safari supports
+ * `navigator.share` perfectly well, but the sheet it opens is Notes, Freeform,
+ * Journal and Reminders — places to file a link rather than people to send it
+ * to. Offering Message, WhatsApp and Email directly is better there, so the
+ * choice keys off `pointer: coarse`, not off feature detection.
  *
  * ## No "who's calling" field
  * The invite travels from the sender's own WhatsApp or Messages account, so
@@ -48,6 +51,25 @@ function isIOS(): boolean {
   const ua = navigator.userAgent;
   // iPadOS 13+ reports itself as a Mac, distinguishable only by touch support
   return /iP(hone|ad|od)/.test(ua) || (/Mac/.test(ua) && navigator.maxTouchPoints > 1);
+}
+
+/**
+ * Whether the device's own share sheet is worth deferring to.
+ *
+ * On a phone it is a list of *people* — WhatsApp, Messages, recent contacts —
+ * and beats anything we could offer. On desktop macOS the same API returns a
+ * list of *places to file a link*: Notes, Reminders, Freeform, Journal. None
+ * of those summon anybody, and they crowd out the three that do.
+ *
+ * `pointer: coarse` means touch is the primary input, which is the closest
+ * thing to "this is a phone" that doesn't involve sniffing user agents.
+ */
+function prefersNativeSheet(): boolean {
+  return (
+    typeof navigator.share === "function" &&
+    typeof window.matchMedia === "function" &&
+    window.matchMedia("(pointer: coarse)").matches
+  );
 }
 
 export function SummonButton({ roomCode, variant = "bar" }: SummonButtonProps) {
@@ -92,7 +114,7 @@ export function SummonButton({ roomCode, variant = "bar" }: SummonButtonProps) {
     // `navigator.share` has to be called synchronously inside the click
     // handler — awaiting anything first loses the user gesture and Safari
     // silently refuses to open the sheet.
-    if (typeof navigator.share === "function") {
+    if (prefersNativeSheet()) {
       navigator
         .share({ title: "watchtogether", text: INVITE_TEXT, url })
         .catch(() => {
@@ -160,8 +182,8 @@ export function SummonButton({ roomCode, variant = "bar" }: SummonButtonProps) {
             ? `Summon a friend to room ${roomCode}`
             : `Summon someone to room ${roomCode}`
         }
-        aria-haspopup={typeof navigator.share === "function" ? undefined : "menu"}
-        aria-expanded={typeof navigator.share === "function" ? undefined : menuOpen}
+        aria-haspopup={prefersNativeSheet() ? undefined : "menu"}
+        aria-expanded={prefersNativeSheet() ? undefined : menuOpen}
       >
         {variant === "bar" && <span className="hidden sm:inline">{roomCode}</span>}
         {/* Outward arrow — the same gesture every platform uses for "send this
