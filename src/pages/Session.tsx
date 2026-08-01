@@ -39,6 +39,7 @@ import { Whiteboard, type WhiteboardHandle, type WhiteboardStroke, type Whiteboa
 import type { Nib, TextFont } from '../utils/brush';
 import { WhiteboardToolbar } from '../components/WhiteboardToolbar';
 import { Dock, type DockEntry } from '../components/Dock';
+import { SummonButton } from '../components/SummonButton';
 import { usePeer } from '../hooks/usePeer';
 import { useYouTubeSync, type SyncMessage } from '../hooks/useYouTubeSync';
 import type { PanelId, PanelState, DynamicPanel, NoteContent } from '../types/panels';
@@ -170,6 +171,9 @@ export function Session({ roomCode, isHost }: SessionProps) {
 	const topZRef = useRef(20);
 	// Background drag-over indicator
 	const [bgDragOver, setBgDragOver] = useState(false);
+	// The "nobody here yet" nudge. Dismissing it is final for the session —
+	// being told twice how to invite someone is worse than not being told.
+	const [summonPromptDismissed, setSummonPromptDismissed] = useState(false);
 
 	// Ref for the outer container div — used to attach native touch listeners
 	const containerRef = useRef<HTMLDivElement>(null);
@@ -1276,12 +1280,6 @@ export function Session({ roomCode, isHost }: SessionProps) {
 	const bgX = ((canvas.x % scaledGrid) + scaledGrid) % scaledGrid;
 	const bgY = ((canvas.y % scaledGrid) + scaledGrid) % scaledGrid;
 
-	const copyCode = () => {
-		navigator.clipboard.writeText(window.location.href).catch(() => {
-			navigator.clipboard.writeText(roomCode);
-		});
-	};
-
 	const statusLabel: Record<string, string> = {
 		idle: 'Setting up…',
 		connecting: 'Connecting…',
@@ -1431,23 +1429,43 @@ export function Session({ roomCode, isHost }: SessionProps) {
 					</button>
 				</div>
 
-				{isHost && (
-					<button
-						onClick={copyCode}
-						className="flex items-center gap-1.5 bg-zinc-800 hover:bg-zinc-700 active:bg-zinc-600 border border-zinc-700 text-zinc-300 text-xs font-mono px-2 sm:px-3 py-1.5 rounded-lg transition-colors shrink-0"
-						title="Copy invite link">
-						<span className="hidden sm:inline">{roomCode}</span>
-						<svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-							<path
-								strokeLinecap="round"
-								strokeLinejoin="round"
-								strokeWidth={2}
-								d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"
-							/>
-						</svg>
-					</button>
-				)}
+				{/* Anyone in the room can summon, not just whoever opened it — a
+				    room holds four, so a guest may well be the one who wants to
+				    pull in the fourth. */}
+				<SummonButton roomCode={roomCode} />
 			</div>
+
+			{/* Nobody here yet — the moment you'd actually want to invite
+			    someone, rather than hoping they spot the button. `waiting` means
+			    the room is live and empty; it clears itself the instant anyone
+			    joins.
+
+			    Sits above the dock rather than under the top bar: the tool
+			    island occupies that slot at the same offset, and at 375px it
+			    covered this card completely. */}
+			{status === 'waiting' && !summonPromptDismissed && (
+				<div
+					className="absolute left-1/2 -translate-x-1/2 z-50 flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-3 bg-zinc-900/95 backdrop-blur border border-zinc-700 rounded-xl pl-3 sm:pl-4 pr-2 py-2.5 shadow-xl max-w-[calc(100vw-2rem)]"
+					style={{ bottom: 'calc(1rem + env(safe-area-inset-bottom) + 4rem)' }}>
+					{/* Stacks on a phone: side by side, the sentence squeezes to
+					    four words a line and the card stops being readable. */}
+					<p className="text-xs sm:text-sm text-zinc-300 whitespace-nowrap">
+						Nobody here yet — summon a friend?
+					</p>
+					<div className="flex items-center gap-2 self-end sm:self-auto">
+						<SummonButton roomCode={roomCode} variant="prompt" />
+						<button
+							onClick={() => setSummonPromptDismissed(true)}
+							className="text-zinc-500 hover:text-zinc-300 transition-colors shrink-0"
+							title="Dismiss"
+							aria-label="Dismiss">
+							<svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={2.5} viewBox="0 0 24 24">
+								<path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+							</svg>
+						</button>
+					</div>
+				</div>
+			)}
 
 			{/* Error banner — sits below the top bar (height is variable due to safe-area) */}
 			{error && (
