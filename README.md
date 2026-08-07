@@ -55,6 +55,7 @@ click.
 - Select and tag an area, then return to it with a framed zoom
 - Paste plain text, YouTube links and other URLs directly onto the canvas
 - Drop audio files and transfer them to peers in chunks with progress feedback
+- Summon a participant via Message, WhatsApp, Email or a copied link — uses the native share sheet on mobile
 
 ## Important current limitations
 
@@ -208,6 +209,8 @@ src/
 │   ├── Dock.tsx               # canvas bookmarks and participant shortcuts
 │   ├── DraggablePanel.tsx     # movement, resizing and tag gestures
 │   ├── StickyNote.tsx         # text, chord and tab notes
+│   ├── SummonButton.tsx       # invite participant via Message, WhatsApp, Email or copied link
+│   ├── VideoGrid.tsx          # side-by-side local and remote video
 │   ├── VideoPanel.tsx         # local and remote video
 │   ├── Whiteboard.tsx         # drawing, text and region selection
 │   ├── WhiteboardToolbar.tsx  # canvas tools and properties
