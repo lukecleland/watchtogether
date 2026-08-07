@@ -1632,6 +1632,7 @@ export function Session({ roomCode, isHost }: SessionProps) {
 							/>
 						) : panel.type === 'youtube' ? (
 							<YoutubeWidget
+								id={panel.id}
 								dataConnection={dataConnection}
 								initialVideoId={panel.initialVideoId}
 								onClose={() => removePanel(panel.id)}
