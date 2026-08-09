@@ -94,9 +94,7 @@ export type SyncMessage =
 	| { type: 'recording-play'; id: string; recordingId: string; time: number; at?: number }
 	| { type: 'recording-pause'; id: string; recordingId: string; time: number; at?: number }
 	| { type: 'recording-seek'; id: string; recordingId: string; time: number; at?: number; playing?: boolean }
-	/** A canvas bookmark. ALL of x/y/w/h are world-normalised — world pixels
-	 *  divided by the sender's viewport — and the receiver multiplies by its
-	 *  own. Raw world pixels here once sent a peer's viewport off the canvas. */
+	/** A canvas bookmark in absolute canvas-world pixels. */
 	| { type: 'position-tag'; id: string; x: number; y: number; label: string; w?: number; h?: number }
 	| { type: 'position-tag-remove'; id: string }
 	/** A panel was tagged; add a pulsing chip to the peer's dock. `label` is
