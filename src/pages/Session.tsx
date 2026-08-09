@@ -176,6 +176,8 @@ export function Session({ roomCode, isHost }: SessionProps) {
 	// The "nobody here yet" nudge. Dismissing it is final for the session —
 	// being told twice how to invite someone is worse than not being told.
 	const [summonPromptDismissed, setSummonPromptDismissed] = useState(false);
+	const [widgetMenuOpen, setWidgetMenuOpen] = useState(false);
+	const widgetMenuRef = useRef<HTMLDivElement>(null);
 
 	// Ref for the outer container div — used to attach native touch listeners
 	const containerRef = useRef<HTMLDivElement>(null);
@@ -217,6 +219,24 @@ export function Session({ roomCode, isHost }: SessionProps) {
 
 	// Bookmarks the peer tagged that we haven't acknowledged yet — these pulse.
 	const [pulsingIds, setPulsingIds] = useState<string[]>([]);
+
+	useEffect(() => {
+		if (!widgetMenuOpen) return;
+		const closeIfOutside = (event: MouseEvent | TouchEvent) => {
+			if (!widgetMenuRef.current?.contains(event.target as Node)) setWidgetMenuOpen(false);
+		};
+		const closeOnEscape = (event: KeyboardEvent) => {
+			if (event.key === 'Escape') setWidgetMenuOpen(false);
+		};
+		document.addEventListener('mousedown', closeIfOutside);
+		document.addEventListener('touchstart', closeIfOutside);
+		window.addEventListener('keydown', closeOnEscape);
+		return () => {
+			document.removeEventListener('mousedown', closeIfOutside);
+			document.removeEventListener('touchstart', closeIfOutside);
+			window.removeEventListener('keydown', closeOnEscape);
+		};
+	}, [widgetMenuOpen]);
 	// Pulse timers, so they can be cleared on acknowledge / unmount
 	const pulseTimersRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
 	// Self-describing label per panel id, used for its dock chip: the YouTube
@@ -1390,8 +1410,8 @@ export function Session({ roomCode, isHost }: SessionProps) {
 					</button>
 				</div>
 
-				{/* Add media buttons */}
-				<div className="flex items-center gap-1 sm:gap-1.5 shrink-0">
+				{/* Add media buttons (desktop) */}
+				<div className="hidden sm:flex items-center gap-1.5 shrink-0">
 					<button
 						onClick={() => spawnPanel('note', window.innerWidth / 2, window.innerHeight / 2)}
 						className="flex items-center gap-1 sm:gap-1.5 bg-zinc-800 hover:bg-zinc-700 active:bg-zinc-600 border border-zinc-700 text-zinc-300 text-xs font-medium px-2 sm:px-3 py-1.5 rounded-lg transition-colors"
@@ -1438,6 +1458,65 @@ export function Session({ roomCode, isHost }: SessionProps) {
 					</button>
 				</div>
 
+				{/* Add media buttons (mobile hamburger) */}
+				<div ref={widgetMenuRef} className="relative sm:hidden shrink-0">
+					<button
+						onClick={() => setWidgetMenuOpen(open => !open)}
+						className="w-8 h-8 flex items-center justify-center bg-zinc-800 hover:bg-zinc-700 active:bg-zinc-600 border border-zinc-700 text-zinc-300 rounded-lg transition-colors"
+						title="Add widget"
+						aria-label="Add widget"
+						aria-haspopup="menu"
+						aria-expanded={widgetMenuOpen}>
+						<svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+							<path strokeLinecap="round" strokeLinejoin="round" d="M4 7h16M4 12h16M4 17h16" />
+						</svg>
+					</button>
+					{widgetMenuOpen && (
+						<div className="absolute right-0 mt-2 w-40 bg-zinc-900/95 backdrop-blur border border-zinc-700 rounded-xl p-1.5 shadow-xl z-50">
+							<button
+								onClick={() => {
+									spawnPanel('note', window.innerWidth / 2, window.innerHeight / 2);
+									setWidgetMenuOpen(false);
+								}}
+								className="w-full text-left px-2.5 py-2 text-xs text-zinc-200 rounded-lg hover:bg-zinc-800 transition-colors">
+								Note
+							</button>
+							<button
+								onClick={() => {
+									spawnPanel('code', window.innerWidth / 2, window.innerHeight / 2, { code: { text: '', language: 'text' } });
+									setWidgetMenuOpen(false);
+								}}
+								className="w-full text-left px-2.5 py-2 text-xs text-zinc-200 rounded-lg hover:bg-zinc-800 transition-colors">
+								Code
+							</button>
+							<button
+								onClick={() => {
+									spawnPanel('youtube', window.innerWidth / 2, window.innerHeight / 2);
+									setWidgetMenuOpen(false);
+								}}
+								className="w-full text-left px-2.5 py-2 text-xs text-zinc-200 rounded-lg hover:bg-zinc-800 transition-colors">
+								YouTube
+							</button>
+							<button
+								onClick={() => {
+									spawnPanel('audio', window.innerWidth / 2, window.innerHeight / 2);
+									setWidgetMenuOpen(false);
+								}}
+								className="w-full text-left px-2.5 py-2 text-xs text-zinc-200 rounded-lg hover:bg-zinc-800 transition-colors">
+								Audio
+							</button>
+							<button
+								onClick={() => {
+									spawnPanel('browser', window.innerWidth / 2, window.innerHeight / 2);
+									setWidgetMenuOpen(false);
+								}}
+								className="w-full text-left px-2.5 py-2 text-xs text-zinc-200 rounded-lg hover:bg-zinc-800 transition-colors">
+								Browser
+							</button>
+						</div>
+					)}
+				</div>
+
 				{/* Anyone in the room can summon, not just whoever opened it — a
 				    room holds four, so a guest may well be the one who wants to
 				    pull in the fourth. */}
@@ -1455,7 +1534,7 @@ export function Session({ roomCode, isHost }: SessionProps) {
 			{status === 'waiting' && !summonPromptDismissed && (
 				<div
 					className="absolute left-1/2 -translate-x-1/2 z-50 flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-3 bg-zinc-900/95 backdrop-blur border border-zinc-700 rounded-xl pl-3 sm:pl-4 pr-2 py-2.5 shadow-xl max-w-[calc(100vw-2rem)]"
-					style={{ bottom: 'calc(1rem + env(safe-area-inset-bottom) + 4rem)' }}>
+					style={{ bottom: 'calc(1rem + env(safe-area-inset-bottom) + 6rem)' }}>
 					{/* Stacks on a phone: side by side, the sentence squeezes to
 					    four words a line and the card stops being readable. */}
 					<p className="text-xs sm:text-sm text-zinc-300 whitespace-nowrap">
