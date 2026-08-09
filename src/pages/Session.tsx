@@ -368,7 +368,7 @@ export function Session({ roomCode, isHost }: SessionProps) {
 		return () => clearTimeout(saveTimer);
 	}, [canvas, customLabels, dockedIds, dynamicPanels, fixedPanels, panelLabels, positionTags, roomCode, savedRoom?.drawings, savedRoom?.panels, whiteboardRevision]);
 
-	const { remoteStreams, dataConnection, participantCount, status, error } = usePeer({
+	const { remoteStreams, dataConnection, participantCount, status, error, replaceVideoTrack } = usePeer({
 		roomCode,
 		isHost,
 		localStream
@@ -1288,13 +1288,29 @@ export function Session({ roomCode, isHost }: SessionProps) {
 		tracks.forEach(track => { track.enabled = enabled; });
 		setMicrophoneEnabled(enabled);
 	}, [localStream]);
-	const toggleCamera = useCallback(() => {
+	const toggleCamera = useCallback(async () => {
 		const tracks = localStream?.getVideoTracks() ?? [];
-		if (!tracks.length) return;
-		const enabled = !tracks.some(track => track.enabled);
-		tracks.forEach(track => { track.enabled = enabled; });
-		setCameraEnabled(enabled);
-	}, [localStream]);
+		if (tracks.length) {
+			await replaceVideoTrack(null);
+			tracks.forEach(track => {
+				track.stop();
+				localStream?.removeTrack(track);
+			});
+			setCameraEnabled(false);
+			return;
+		}
+		try {
+			const cameraStream = await navigator.mediaDevices.getUserMedia({ video: true });
+			const track = cameraStream.getVideoTracks()[0];
+			if (!track || !localStream) return;
+			localStream.addTrack(track);
+			await replaceVideoTrack(track);
+			setCameraEnabled(true);
+			setMediaError(null);
+		} catch {
+			setMediaError('Camera could not be restarted. Check browser permission and try again.');
+		}
+	}, [localStream, replaceVideoTrack]);
 
 	useEffect(() => {
 		let stream: MediaStream | undefined;
@@ -1992,7 +2008,7 @@ export function Session({ roomCode, isHost }: SessionProps) {
 						{zoomTagHandle('local', 'You')}
 						{/* No onToggleDock: participants are permanently docked, so a
 						    bookmark toggle here would be a button that does nothing */}
-						<VideoPanel stream={localStream} label={customLabels.local ?? 'You'} muted docked={dockedIds.includes('local')} localControls microphoneEnabled={microphoneEnabled} cameraEnabled={cameraEnabled} onToggleMicrophone={toggleMicrophone} onToggleCamera={toggleCamera} />
+						<VideoPanel stream={localStream} label={customLabels.local ?? 'You'} muted docked={dockedIds.includes('local')} localControls microphoneEnabled={microphoneEnabled} cameraEnabled={cameraEnabled} onToggleMicrophone={toggleMicrophone} onToggleCamera={() => void toggleCamera()} />
 					</DraggablePanel>
 				)}
 
