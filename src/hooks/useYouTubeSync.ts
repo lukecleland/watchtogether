@@ -69,6 +69,7 @@ export type SyncMessage =
 	  }
 	/** Text was re-typed. An empty string deletes it. */
 	| { type: 'text-edit'; id: string; text: string }
+	| { type: 'text-move'; id: string; x: number; y: number }
 	| { type: 'spawn-youtube'; id: string; videoId?: string; state: PanelState }
 	| { type: 'spawn-browser'; id: string; url?: string; state: PanelState }
 	| { type: 'browser-load'; id: string; url: string }

@@ -43,6 +43,7 @@ interface StickyNoteProps {
   onClose?: () => void;
   docked?: boolean;
   onToggleDock?: () => void;
+  title?: string;
 }
 
 /**
@@ -171,7 +172,7 @@ function ChordDiagram({
   );
 }
 
-export function StickyNote({ note, onChange, onClose, docked = false, onToggleDock }: StickyNoteProps) {
+export function StickyNote({ note, onChange, onClose, docked = false, onToggleDock, title = "Note" }: StickyNoteProps) {
   const [showColours, setShowColours] = useState(false);
   const c = COLOURS[note.colour] ?? COLOURS.amber;
 
@@ -221,6 +222,7 @@ export function StickyNote({ note, onChange, onClose, docked = false, onToggleDo
     >
       <div className={`drag-handle flex items-center justify-between px-2 py-1.5 ${c.head} cursor-grab active:cursor-grabbing select-none shrink-0`}>
         <div className="no-drag flex items-center gap-0.5">
+          <span className={`mr-1 max-w-24 truncate text-[10px] font-bold ${c.text}`}>{title}</span>
           {(["text", "chord", "tab"] as NoteKind[]).map(k => (
             <button
               key={k}

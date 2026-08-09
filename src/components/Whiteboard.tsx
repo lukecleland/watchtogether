@@ -78,6 +78,7 @@ export interface WhiteboardHandle {
   drawStroke(stroke: WhiteboardStroke): void;
   drawText(item: WhiteboardText): void;
   editText(id: string, text: string): void;
+  moveText(id: string, x: number, y: number): void;
   clearCanvas(): void;
   getItems(): CanvasItem[];
   replaceItems(items: CanvasItem[]): void;
@@ -95,6 +96,7 @@ interface WhiteboardProps {
   onStroke: (stroke: WhiteboardStroke) => void;
   onText: (item: WhiteboardText) => void;
   onTextEdit: (id: string, text: string) => void;
+  onTextMove: (id: string, x: number, y: number) => void;
   /** A dragged-out area, in world-normalised coordinates. */
   onRegion: (r: { x: number; y: number; w: number; h: number }) => void;
   canvasTransform: { x: number; y: number; scale: number };
@@ -140,6 +142,7 @@ const Whiteboard = forwardRef<WhiteboardHandle, WhiteboardProps>(
       onStroke,
       onText,
       onTextEdit,
+      onTextMove,
       onRegion,
       canvasTransform
     },
@@ -158,6 +161,8 @@ const Whiteboard = forwardRef<WhiteboardHandle, WhiteboardProps>(
     const [editing, setEditing] = useState<Caret | null>(null);
     const editingRef = useRef<Caret | null>(null);
     const editRef = useRef<HTMLInputElement>(null);
+    const [hoveredText, setHoveredText] = useState<WhiteboardText | null>(null);
+    const movingTextRef = useRef<{ id: string; dx: number; dy: number } | null>(null);
     // Marquee for the region tool, in screen coordinates while dragging
     const [marquee, setMarquee] = useState<{ x0: number; y0: number; x1: number; y1: number } | null>(null);
     const marqueeRef = useRef<{ x0: number; y0: number; x1: number; y1: number } | null>(null);
@@ -395,6 +400,13 @@ const Whiteboard = forwardRef<WhiteboardHandle, WhiteboardProps>(
           else strokesRef.current[idx] = { ...(strokesRef.current[idx] as WhiteboardText), text };
           redrawAll();
         },
+        moveText(id: string, x: number, y: number) {
+          const item = strokesRef.current.find(candidate => isText(candidate) && candidate.id === id) as WhiteboardText | undefined;
+          if (!item) return;
+          item.x = x;
+          item.y = y;
+          redrawAll();
+        },
         clearCanvas() {
           strokesRef.current = [];
           const canvas = canvasRef.current;
@@ -499,10 +511,13 @@ const Whiteboard = forwardRef<WhiteboardHandle, WhiteboardProps>(
     };
 
     const openCaret = (sx: number, sy: number) => {
-      // A click elsewhere while typing commits the first, then opens a new one
-      if (editingRef.current) commitText();
-
       const hit = textAt(sx, sy);
+      // Clicking away from an active caret only commits and blurs it. A second
+      // click is required to create another text entity.
+      if (editingRef.current) {
+        commitText();
+        if (!hit) return;
+      }
       if (hit) {
         // Re-open existing text where it actually sits, not where you clicked
         const { x: tx, y: ty, scale } = canvasTransformRef.current;
@@ -551,7 +566,11 @@ const Whiteboard = forwardRef<WhiteboardHandle, WhiteboardProps>(
     };
 
     const handlePointerMove = (e: React.PointerEvent<HTMLCanvasElement>) => {
-      if (e.pointerType === "touch" || tool === "text") return;
+      if (e.pointerType === "touch") return;
+      if (tool === "pointer" || tool === "text") {
+        setHoveredText(textAt(e.clientX, e.clientY));
+        if (tool === "text") return;
+      }
       if (tool === "region") {
         if (!marqueeRef.current) return;
         const m = { ...marqueeRef.current, x1: e.clientX, y1: e.clientY };
@@ -687,6 +706,10 @@ const Whiteboard = forwardRef<WhiteboardHandle, WhiteboardProps>(
           onClick={handleCanvasClick}
           onPointerDown={handlePointerDown}
           onPointerMove={handlePointerMove}
+          onPointerLeave={event => {
+            const next = event.relatedTarget;
+            if (!(next instanceof Element && next.closest('[data-text-move-handle]'))) setHoveredText(null);
+          }}
           onPointerUp={stopDrawing}
           onPointerCancel={stopDrawing}
           onTouchStart={handleTouchStart}
@@ -694,6 +717,55 @@ const Whiteboard = forwardRef<WhiteboardHandle, WhiteboardProps>(
           onTouchEnd={() => stopDrawing()}
           onTouchCancel={() => stopDrawing()}
         />
+
+        {hoveredText && !editing && (() => {
+          const { x: tx, y: ty, scale } = canvasTransform;
+          const size = hoveredText.size * Math.min(window.innerWidth, window.innerHeight);
+          const left = hoveredText.x * window.innerWidth * scale + tx;
+          const top = (hoveredText.y * window.innerHeight - size) * scale + ty;
+          // The exact canvas measurement is only needed for hit-testing. A
+          // conservative character-width estimate keeps render ref-free and
+          // places the handle just beyond the text's top-right edge.
+          const right = left + hoveredText.text.length * size * 0.62 * scale;
+          return (
+            <button
+              data-text-move-handle
+              className="fixed z-[996] flex h-6 w-6 items-center justify-center rounded-md border border-zinc-600 bg-zinc-900/95 text-zinc-300 shadow-lg cursor-grab active:cursor-grabbing hover:bg-zinc-700"
+              style={{ left: right + 4, top: top - 4, touchAction: "none" }}
+              title="Move text"
+              aria-label="Move text"
+              onPointerDown={event => {
+                event.preventDefault();
+                event.currentTarget.setPointerCapture(event.pointerId);
+                const pos = getPosFromClient(event.clientX, event.clientY);
+                movingTextRef.current = { id: hoveredText.id, dx: pos.x - hoveredText.x, dy: pos.y - hoveredText.y };
+              }}
+              onPointerMove={event => {
+                const moving = movingTextRef.current;
+                if (!moving || moving.id !== hoveredText.id) return;
+                const pos = getPosFromClient(event.clientX, event.clientY);
+                const item = strokesRef.current.find(candidate => isText(candidate) && candidate.id === moving.id) as WhiteboardText | undefined;
+                if (!item) return;
+                item.x = pos.x - moving.dx;
+                item.y = pos.y - moving.dy;
+                setHoveredText({ ...item });
+                redrawAll();
+              }}
+              onPointerUp={event => {
+                const moving = movingTextRef.current;
+                movingTextRef.current = null;
+                if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
+                const item = strokesRef.current.find(candidate => isText(candidate) && candidate.id === moving?.id) as WhiteboardText | undefined;
+                if (item) onTextMove(item.id, item.x, item.y);
+              }}
+              onPointerLeave={() => {
+                if (!movingTextRef.current) setHoveredText(null);
+              }}
+            >
+              <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="currentColor"><circle cx="8" cy="8" r="1.5"/><circle cx="16" cy="8" r="1.5"/><circle cx="8" cy="16" r="1.5"/><circle cx="16" cy="16" r="1.5"/></svg>
+            </button>
+          );
+        })()}
 
         {marquee && (
           <div

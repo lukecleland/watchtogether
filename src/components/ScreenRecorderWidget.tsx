@@ -22,6 +22,7 @@ interface ScreenRecorderWidgetProps {
   onToggleDock?: () => void;
   initialPlayback?: PanelPlayback;
   onPlaybackChange?: (playback: PanelPlayback) => void;
+  title?: string;
 }
 
 function recordingMimeType(): string {
@@ -50,6 +51,7 @@ export function ScreenRecorderWidget({
   onToggleDock,
   initialPlayback,
   onPlaybackChange,
+  title = "Screen recorder",
 }: ScreenRecorderWidgetProps) {
   const [clips, setClips] = useState<RecordingClip[]>(recordings);
   const [selectedId, setSelectedId] = useState<string | null>(initialPlayback?.recordingId ?? recordings[0]?.id ?? null);
@@ -253,7 +255,7 @@ export function ScreenRecorderWidget({
       <div className="drag-handle flex shrink-0 cursor-grab items-center justify-between bg-zinc-900 px-3 py-2 active:cursor-grabbing">
         <div className="flex items-center gap-2 text-xs font-semibold text-zinc-300">
           <span className={`h-3 w-3 rounded-full ${recording && !paused ? "animate-pulse bg-red-500" : "bg-zinc-600"}`} />
-          Screen recorder
+          {title}
         </div>
         <div className="flex items-center gap-1">
           {onToggleDock && <DockButton docked={docked} onToggle={onToggleDock} />}
