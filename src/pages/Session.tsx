@@ -34,6 +34,7 @@ import { YoutubeWidget } from '../components/YoutubeWidget';
 import { AudioPlayer } from '../components/AudioPlayer';
 import { StickyNote } from '../components/StickyNote';
 import { BrowserWidget } from '../components/BrowserWidget';
+import { CodeWidget } from '../components/CodeWidget';
 import { DraggablePanel } from '../components/DraggablePanel';
 import { Whiteboard, type WhiteboardHandle, type WhiteboardStroke, type WhiteboardText } from '../components/Whiteboard';
 import type { Nib, TextFont } from '../utils/brush';
@@ -42,9 +43,10 @@ import { Dock, type DockEntry } from '../components/Dock';
 import { SummonButton } from '../components/SummonButton';
 import { usePeer } from '../hooks/usePeer';
 import { useYouTubeSync, type SyncMessage } from '../hooks/useYouTubeSync';
-import type { PanelId, PanelState, DynamicPanel, NoteContent } from '../types/panels';
+import type { PanelId, PanelState, DynamicPanel, NoteContent, CodeContent } from '../types/panels';
 import { chordsOf, defaultNoteContent } from '../types/panels';
 import { TransferReceiver, base64ToChunk, chunkCount, sendFileInChunks } from '../utils/fileTransfer';
+import { codeFromText } from '../utils/code';
 
 interface SessionProps {
 	roomCode: string;
@@ -403,6 +405,10 @@ export function Session({ roomCode, isHost }: SessionProps) {
 		} else if (msg.type === 'note-update') {
 			// Last write wins — a note is small enough that merging isn't worth it
 			setDynamicPanels(prev => prev.map(p => (p.id === msg.id ? { ...p, note: msg.note } : p)));
+		} else if (msg.type === 'spawn-code') {
+			setDynamicPanels(prev => [...prev, { id: msg.id, type: 'code', state: denormalisePanel(msg.state), code: msg.code }]);
+		} else if (msg.type === 'code-update') {
+			setDynamicPanels(prev => prev.map(p => (p.id === msg.id ? { ...p, code: msg.code } : p)));
 		} else if (msg.type === 'remove-panel') {
 			setDynamicPanels(prev => prev.filter(p => p.id !== msg.id));
 			// The panel is gone, so any local dock chip pointing at it must go too
@@ -706,6 +712,7 @@ export function Session({ roomCode, isHost }: SessionProps) {
 			audio: 360,
 			note: 420,
 			browser: 760,
+			code: 640,
 			position: 0
 		};
 
@@ -757,10 +764,12 @@ export function Session({ roomCode, isHost }: SessionProps) {
 	useEffect(() => {
 		const pulseTimers = pulseTimersRef.current;
 		const noteTimers = noteSendTimersRef.current;
+		const codeTimers = codeSendTimersRef.current;
 		return () => {
 			if (jumpAnimRef.current !== null) cancelAnimationFrame(jumpAnimRef.current);
 			Object.values(pulseTimers).forEach(clearTimeout);
 			Object.values(noteTimers).forEach(clearTimeout);
+			Object.values(codeTimers).forEach(clearTimeout);
 		};
 	}, []);
 
@@ -782,7 +791,7 @@ export function Session({ roomCode, isHost }: SessionProps) {
 			const firstLine = text.split('\n')[0].trim();
 			if (kind === 'text' && firstLine) return firstLine.slice(0, 40);
 		}
-		const base = panel.type === 'youtube' ? 'YouTube' : panel.type === 'note' ? 'Note' : panel.type === 'browser' ? 'Browser' : 'Audio';
+		const base = panel.type === 'youtube' ? 'YouTube' : panel.type === 'note' ? 'Note' : panel.type === 'browser' ? 'Browser' : panel.type === 'code' ? 'Code' : 'Audio';
 		const sameType = dynamicPanels.filter(p => p.type === panel.type);
 		if (sameType.length < 2) return base;
 		return `${base} ${sameType.findIndex(p => p.id === panel.id) + 1}`;
@@ -920,15 +929,15 @@ export function Session({ roomCode, isHost }: SessionProps) {
 	// Spawn a new dynamic panel at the given screen position (screen coords → world coords).
 	// Pass fromRemote=true when applying a remote-initiated spawn (skips sync to avoid loops).
 	const spawnPanel = (
-		type: 'youtube' | 'audio' | 'browser' | 'note',
+		type: 'youtube' | 'audio' | 'browser' | 'note' | 'code',
 		screenX: number,
 		screenY: number,
-		extra?: { initialVideoId?: string; initialFile?: File; initialUrl?: string; note?: NoteContent },
+		extra?: { initialVideoId?: string; initialFile?: File; initialUrl?: string; note?: NoteContent; code?: CodeContent },
 		remoteId?: string
 	) => {
 		const { x: tx, y: ty, scale } = canvasStateRef.current;
-		const w = type === 'browser' ? 560 : type === 'youtube' ? 320 : type === 'note' ? 300 : 300;
-		const h = type === 'browser' ? 420 : type === 'youtube' ? 260 : type === 'note' ? 300 : 360;
+		const w = type === 'browser' ? 560 : type === 'code' ? 520 : type === 'youtube' ? 320 : type === 'note' ? 300 : 300;
+		const h = type === 'browser' ? 420 : type === 'code' ? 380 : type === 'youtube' ? 260 : type === 'note' ? 300 : 360;
 		const worldX = (screenX - tx) / scale - w / 2;
 		const worldY = (screenY - ty) / scale - h / 2;
 		const nextZ = ++topZRef.current;
@@ -949,6 +958,8 @@ export function Session({ roomCode, isHost }: SessionProps) {
 				if (extra?.initialFile) sendFileTo(id, extra.initialFile);
 			} else if (type === 'note') {
 				sendSync({ type: 'spawn-note', id, state: normalisePanel(state), note: extra?.note ?? defaultNoteContent() });
+			} else if (type === 'code') {
+				sendSync({ type: 'spawn-code', id, state: normalisePanel(state), code: extra?.code ?? { text: '', language: 'text' } });
 			}
 		}
 	};
@@ -966,31 +977,15 @@ export function Session({ roomCode, isHost }: SessionProps) {
 		}, 250);
 	};
 
-	useEffect(() => {
-		const handleClipboardPaste = (e: ClipboardEvent) => {
-			// The YouTube widget has its own paste handler. Likewise, never
-			// hijack clipboard input from any other editable control.
-			if (e.defaultPrevented) return;
-			const target = e.target as HTMLElement | null;
-			if (
-				target instanceof HTMLInputElement ||
-				target instanceof HTMLTextAreaElement ||
-				target?.isContentEditable
-			)
-				return;
-
-			const videoId = parseYouTubeVideoId(e.clipboardData?.getData('text/plain') ?? '');
-			if (!videoId) return;
-
-			e.preventDefault();
-			spawnPanel('youtube', window.innerWidth / 2, window.innerHeight / 2, {
-				initialVideoId: videoId
-			});
-		};
-
-		document.addEventListener('paste', handleClipboardPaste);
-		return () => document.removeEventListener('paste', handleClipboardPaste);
-	});
+	const codeSendTimersRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
+	const updateCode = (id: string, code: CodeContent) => {
+		setDynamicPanels(prev => prev.map(p => (p.id === id ? { ...p, code } : p)));
+		if (codeSendTimersRef.current[id]) clearTimeout(codeSendTimersRef.current[id]);
+		codeSendTimersRef.current[id] = setTimeout(() => {
+			sendSync({ type: 'code-update', id, code });
+			delete codeSendTimersRef.current[id];
+		}, 250);
+	};
 
 	useEffect(() => {
 		let stream: MediaStream | undefined;
@@ -1045,6 +1040,7 @@ export function Session({ roomCode, isHost }: SessionProps) {
 
 	useEffect(() => {
 		const onPaste = (e: ClipboardEvent) => {
+			if (e.defaultPrevented) return;
 			// Never hijack a paste aimed at a note, the rename box or a URL bar.
 			// The target is only an Element when something is focused — a paste
 			// with focus on the document itself reports the window.
@@ -1069,6 +1065,12 @@ export function Session({ roomCode, isHost }: SessionProps) {
 
 			if (/^https?:\/\//i.test(raw)) {
 				spawnPanel('browser', px, py, { initialUrl: raw });
+				return;
+			}
+
+			const code = codeFromText(raw);
+			if (code) {
+				spawnPanel('code', px, py, { code });
 				return;
 			}
 
@@ -1400,6 +1402,13 @@ export function Session({ roomCode, isHost }: SessionProps) {
 						<span className="hidden sm:inline">Note</span>
 					</button>
 					<button
+						onClick={() => spawnPanel('code', window.innerWidth / 2, window.innerHeight / 2, { code: { text: '', language: 'text' } })}
+						className="flex items-center gap-1 sm:gap-1.5 bg-zinc-800 hover:bg-zinc-700 active:bg-zinc-600 border border-zinc-700 text-zinc-300 text-xs font-medium px-2 sm:px-3 py-1.5 rounded-lg transition-colors"
+						title="Add a code editor">
+						<span className="font-mono text-emerald-400">&lt;/&gt;</span>
+						<span className="hidden sm:inline">Code</span>
+					</button>
+					<button
 						onClick={() => spawnPanel('youtube', window.innerWidth / 2, window.innerHeight / 2)}
 						className="flex items-center gap-1 sm:gap-1.5 bg-zinc-800 hover:bg-zinc-700 active:bg-zinc-600 border border-zinc-700 text-zinc-300 text-xs font-medium px-2 sm:px-3 py-1.5 rounded-lg transition-colors"
 						title="Add a YouTube player">
@@ -1618,7 +1627,7 @@ export function Session({ roomCode, isHost }: SessionProps) {
 						state={panel.state}
 						{...makeDynamicPanelHandlers(panel.id)}
 						onToggleDock={() => toggleDock(panel.id)}
-						minWidth={panel.type === 'browser' ? 360 : panel.type === 'youtube' ? 280 : 260}
+						minWidth={panel.type === 'browser' ? 360 : panel.type === 'code' ? 380 : panel.type === 'youtube' ? 280 : 260}
 						minHeight={panel.type === 'browser' ? 240 : panel.type === 'audio' ? 300 : 60}
 						scale={canvas.scale}>
 						{zoomTagHandle(panel.id, panelLabels[panel.id] ?? fallbackLabel(panel))}
@@ -1626,6 +1635,14 @@ export function Session({ roomCode, isHost }: SessionProps) {
 							<StickyNote
 								note={panel.note ?? defaultNoteContent()}
 								onChange={next => updateNote(panel.id, next)}
+								onClose={() => removePanel(panel.id)}
+								docked={dockedIds.includes(panel.id)}
+								onToggleDock={() => toggleDock(panel.id)}
+							/>
+						) : panel.type === 'code' ? (
+							<CodeWidget
+								code={panel.code ?? { text: '', language: 'text' }}
+								onChange={next => updateCode(panel.id, next)}
 								onClose={() => removePanel(panel.id)}
 								docked={dockedIds.includes(panel.id)}
 								onToggleDock={() => toggleDock(panel.id)}
