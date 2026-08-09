@@ -34,10 +34,10 @@ import type { NoteContent, PanelState } from '../types/panels';
  *   does — your "You" is their "Guest".
  */
 export type SyncMessage =
-	| { type: 'load'; videoId: string }
-	| { type: 'play'; time: number; at?: number }
-	| { type: 'pause'; time: number; at?: number }
-	| { type: 'seek'; time: number; at?: number }
+	| { type: 'load'; id: string; videoId: string }
+	| { type: 'play'; id: string; time: number; at?: number }
+	| { type: 'pause'; id: string; time: number; at?: number }
+	| { type: 'seek'; id: string; time: number; at?: number }
 	| { type: 'audio-play'; id: string; time: number; at?: number }
 	| { type: 'audio-pause'; id: string; time: number; at?: number }
 	| { type: 'audio-seek'; id: string; time: number; at?: number; playing?: boolean }

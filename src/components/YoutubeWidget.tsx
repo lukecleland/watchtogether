@@ -22,6 +22,7 @@ import type { RoomDataConnection } from "../hooks/usePeer";
  */
 
 interface YoutubeWidgetProps {
+  id: string;
   dataConnection: RoomDataConnection | null;
   initialVideoId?: string;
   onClose?: () => void;
@@ -59,6 +60,7 @@ function currentSyncedTime(time: number, sentAt?: number): number {
 }
 
 export function YoutubeWidget({
+  id,
   dataConnection,
   initialVideoId,
   onClose,
@@ -103,10 +105,10 @@ export function YoutubeWidget({
       if (Date.now() < syncUntilRef.current) return;
       const time = getCurrentTime();
       const at = Date.now();
-      if (state === 1) sendSyncRef.current({ type: "play", time, at });
-      if (state === 2) sendSyncRef.current({ type: "pause", time, at });
+      if (state === 1) sendSyncRef.current({ type: "play", id, time, at });
+      if (state === 2) sendSyncRef.current({ type: "pause", id, time, at });
     },
-    [],
+    [id],
   );
 
   const { loadVideo, playVideo, pauseVideo, seekTo, setVolume, getTitle } =
@@ -131,23 +133,27 @@ export function YoutubeWidget({
   const handleRemoteSync = useCallback(
     (msg: SyncMessage) => {
       if (msg.type === "load") {
+        if (msg.id !== id) return;
         setHasVideo(true);
         setMinimised(false);
         loadVideo(msg.videoId);
       } else if (msg.type === "play") {
+        if (msg.id !== id) return;
         syncUntilRef.current = Date.now() + 500;
         seekTo(currentSyncedTime(msg.time, msg.at));
         playVideo();
       } else if (msg.type === "pause") {
+        if (msg.id !== id) return;
         syncUntilRef.current = Date.now() + 500;
         seekTo(msg.time);
         pauseVideo();
       } else if (msg.type === "seek") {
+        if (msg.id !== id) return;
         syncUntilRef.current = Date.now() + 500;
         seekTo(msg.time);
       }
     },
-    [loadVideo, playVideo, pauseVideo, seekTo],
+    [id, loadVideo, playVideo, pauseVideo, seekTo],
   );
 
   const { sendSync } = useYouTubeSync({
@@ -158,28 +164,28 @@ export function YoutubeWidget({
   sendSyncRef.current = sendSync;
 
   const handleSubmit = () => {
-    const id = parseVideoId(inputValue);
-    if (!id) {
+    const videoId = parseVideoId(inputValue);
+    if (!videoId) {
       setInputError(true);
       setTimeout(() => setInputError(false), 1500);
       return;
     }
     setHasVideo(true);
     setMinimised(false);
-    loadVideo(id);
-    sendSync({ type: "load", videoId: id });
+    loadVideo(videoId);
+    sendSync({ type: "load", id, videoId });
   };
 
   const onPaste = (e: React.ClipboardEvent<HTMLInputElement>) => {
     const text = e.clipboardData.getData("text");
-    const id = parseVideoId(text);
-    if (id) {
+    const videoId = parseVideoId(text);
+    if (videoId) {
       e.preventDefault();
       setInputValue(text);
       setHasVideo(true);
       setMinimised(false);
-      loadVideo(id);
-      sendSync({ type: "load", videoId: id });
+      loadVideo(videoId);
+      sendSync({ type: "load", id, videoId });
     }
   };
 
