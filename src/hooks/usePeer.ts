@@ -24,6 +24,12 @@ export interface RoomDataConnection {
 class MeshDataConnection implements RoomDataConnection {
   private connections = new Map<string, DataConnection>();
   private listeners = new Set<(data: unknown) => void>();
+  private localPeerId = "";
+  private seenMessages = new Set<string>();
+
+  configure(localPeerId: string) {
+    this.localPeerId = localPeerId;
+  }
 
   get open() {
     return [...this.connections.values()].some(connection => connection.open);
@@ -45,6 +51,22 @@ class MeshDataConnection implements RoomDataConnection {
     this.listeners.forEach(listener => listener(data));
   }
 
+  accept(messageId: string) {
+    if (this.seenMessages.has(messageId)) return false;
+    this.seenMessages.add(messageId);
+    if (this.seenMessages.size > 2_000) {
+      const oldest = this.seenMessages.values().next().value;
+      if (oldest) this.seenMessages.delete(oldest);
+    }
+    return true;
+  }
+
+  relay(message: MeshMessage, exceptPeerId: string) {
+    for (const [peerId, connection] of this.connections) {
+      if (peerId !== exceptPeerId && connection.open) connection.send(message);
+    }
+  }
+
   add(connection: DataConnection) {
     this.connections.set(connection.peer, connection);
   }
@@ -64,8 +86,15 @@ class MeshDataConnection implements RoomDataConnection {
   }
 
   send(data: unknown) {
+    if (typeof data !== "object" || data === null) return;
+    const message = {
+      ...data,
+      __meshMessageId: crypto.randomUUID(),
+      __meshSourcePeerId: this.localPeerId,
+    } as MeshMessage;
+    this.accept(message.__meshMessageId);
     for (const connection of this.connections.values()) {
-      if (connection.open) connection.send(data);
+      if (connection.open) connection.send(message);
     }
   }
 
@@ -94,7 +123,14 @@ interface UsePeerResult {
 type RoomRole = "owner" | "joiner";
 type MeshControl =
   | { __watchTogether: "roster"; peers: string[] }
-  | { __watchTogether: "room-full" };
+  | { __watchTogether: "room-full" }
+  | { __watchTogether: "ping"; nonce: string }
+  | { __watchTogether: "pong"; nonce: string };
+
+type MeshMessage = {
+  __meshMessageId: string;
+  __meshSourcePeerId: string;
+} & Record<string, unknown>;
 
 const MAX_PARTICIPANTS = 4;
 
@@ -104,6 +140,10 @@ function isMeshControl(data: unknown): data is MeshControl {
     data !== null &&
     "__watchTogether" in data
   );
+}
+
+function isMeshMessage(data: unknown): data is MeshMessage {
+  return typeof data === "object" && data !== null && "__meshMessageId" in data && typeof data.__meshMessageId === "string" && "__meshSourcePeerId" in data && typeof data.__meshSourcePeerId === "string";
 }
 
 function identifyPeerMessage(
@@ -320,6 +360,9 @@ export function usePeer({
         return;
       }
       dataConnections.set(connection.peer, connection);
+      let lastSeenAt = Date.now();
+      let heartbeatConfirmed = false;
+      let heartbeat: ReturnType<typeof setInterval> | null = null;
 
       connection.on("open", () => {
         if (!active || dataConnections.get(connection.peer) !== connection) return;
@@ -335,6 +378,18 @@ export function usePeer({
         }
 
         mesh.add(connection);
+        lastSeenAt = Date.now();
+        heartbeat = setInterval(() => {
+          if (heartbeatConfirmed && Date.now() - lastSeenAt > 6_000) {
+            connection.close();
+            return;
+          }
+          try {
+            connection.send({ __watchTogether: "ping", nonce: crypto.randomUUID() } satisfies MeshControl);
+          } catch {
+            connection.close();
+          }
+        }, 2_000);
         clearTransition();
         publishConnectionState();
         if (role === "owner") broadcastRoster(peer);
@@ -348,6 +403,13 @@ export function usePeer({
 
       connection.on("data", raw => {
         if (!active || dataConnections.get(connection.peer) !== connection) return;
+        lastSeenAt = Date.now();
+        if (isMeshMessage(raw)) {
+          if (!mesh.accept(raw.__meshMessageId)) return;
+          mesh.relay(raw, connection.peer);
+          mesh.emit(identifyPeerMessage(raw, raw.__meshSourcePeerId, peer.id));
+          return;
+        }
         if (isMeshControl(raw)) {
           if (raw.__watchTogether === "roster") handleRoster(peer, raw.peers);
           if (raw.__watchTogether === "room-full") {
@@ -355,12 +417,16 @@ export function usePeer({
             setError("This room is full (maximum 4 people).");
             setStatus("error");
           }
+          if (raw.__watchTogether === "ping") connection.send({ __watchTogether: "pong", nonce: raw.nonce } satisfies MeshControl);
+          if (raw.__watchTogether === "pong") heartbeatConfirmed = true;
           return;
         }
         mesh.emit(identifyPeerMessage(raw, connection.peer, peer.id));
       });
 
       const remove = () => {
+        if (heartbeat) clearInterval(heartbeat);
+        heartbeat = null;
         if (!active || dataConnections.get(connection.peer) !== connection) return;
         dataConnections.delete(connection.peer);
         mesh.remove(connection.peer, connection);
@@ -414,6 +480,7 @@ export function usePeer({
       peer.on("open", () => {
         if (!active || peerRef.current !== peer) return;
         setError(null);
+        mesh.configure(peer.id);
         if (role === "owner") setStatus("waiting");
         else dialOwner(peer);
       });
