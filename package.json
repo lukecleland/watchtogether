@@ -10,17 +10,22 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@astral-sh/ruff-wasm-web": "^0.16.2",
     "@tailwindcss/vite": "^4.2.2",
     "peerjs": "^1.5.5",
+    "prettier": "^3.9.6",
+    "prismjs": "^1.30.0",
     "react": "^19.2.4",
     "react-dom": "^19.2.4",
     "react-draggable": "^4.5.0",
     "react-youtube": "^10.1.0",
+    "sql-formatter": "^15.8.2",
     "tailwindcss": "^4.2.2"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.4",
     "@types/node": "^24.12.2",
+    "@types/prismjs": "^1.26.6",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^6.0.1",

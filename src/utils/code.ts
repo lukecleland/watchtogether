@@ -1,5 +1,19 @@
 import type { CodeContent } from '../types/panels';
 
+let pythonFormatter: Promise<(source: string) => string> | null = null;
+
+function getPythonFormatter(): Promise<(source: string) => string> {
+	pythonFormatter ??= import('@astral-sh/ruff-wasm-web').then(async ruff => {
+		await ruff.default();
+		const workspace = new ruff.Workspace(
+			{ 'line-length': 88, 'indent-width': 4, format: { 'indent-style': 'space', 'quote-style': 'double' } },
+			ruff.PositionEncoding.Utf16
+		);
+		return source => workspace.format(source);
+	});
+	return pythonFormatter;
+}
+
 export function detectCodeLanguage(text: string): string | null {
 	const value = text.trim();
 	if (!value || !value.includes('\n')) return null;
@@ -25,22 +39,43 @@ export function codeFromText(text: string): CodeContent | null {
 	return language ? { text: text.trim(), language } : null;
 }
 
-export function formatCode(content: CodeContent): string {
+export function canFormatLanguage(language: string): boolean {
+	return ['javascript', 'typescript', 'json', 'html', 'css', 'python', 'sql'].includes(language);
+}
+
+/** Format with the parser belonging to the selected language. Imports stay
+ * lazy so opening a room does not download every formatter up front. */
+export async function formatCode(content: CodeContent): Promise<string> {
 	const source = content.text.trim();
 	if (!source) return '';
-	if (content.language === 'json') {
-		try { return JSON.stringify(JSON.parse(source), null, 2); } catch { return content.text; }
+
+	if (content.language === 'sql') {
+		const { format } = await import('sql-formatter');
+		return format(source, { language: 'sql', tabWidth: 2, keywordCase: 'upper' });
 	}
 
-	// A deliberately small, safe formatter for brace-based snippets. It leaves
-	// Python, SQL and unknown formats untouched rather than damaging valid code.
-	if (!['javascript', 'typescript', 'code'].includes(content.language)) return content.text;
-	let depth = 0;
-	return source.split('\n').map(line => {
-		const trimmed = line.trim();
-		if (/^[}\]]/.test(trimmed)) depth = Math.max(0, depth - 1);
-		const formatted = `${'  '.repeat(depth)}${trimmed}`;
-		if (/[{[]\s*$/.test(trimmed) && !/^[}\]]/.test(trimmed)) depth++;
-		return formatted;
-	}).join('\n');
+	if (content.language === 'python') {
+		return (await getPythonFormatter())(source);
+	}
+
+	const prettier = await import('prettier/standalone');
+	const estree = await import('prettier/plugins/estree');
+	const parser = content.language === 'javascript' ? 'babel' : content.language;
+	const syntaxPlugin =
+		content.language === 'typescript'
+			? await import('prettier/plugins/typescript')
+			: content.language === 'html'
+				? await import('prettier/plugins/html')
+				: content.language === 'css'
+					? await import('prettier/plugins/postcss')
+					: await import('prettier/plugins/babel');
+
+	return prettier.format(source, {
+		parser,
+		plugins: [syntaxPlugin, estree],
+		tabWidth: 2,
+		useTabs: false,
+		semi: true,
+		singleQuote: true
+	});
 }
