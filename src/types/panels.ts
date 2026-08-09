@@ -81,10 +81,8 @@ export function defaultNoteContent(): NoteContent {
 /**
  * Layout state for a single panel.
  *
- * Internally x/y/width/height are CSS pixels (used by react-draggable and the
- * DOM). When sent over the data channel they are first converted to viewport
- * fractions (0–1) by `normalisePanel` so the remote peer can place them
- * proportionally on their own (possibly different-resolution) screen.
+ * x/y/width/height are absolute canvas-world CSS pixels. They are sent and
+ * persisted unchanged so a different viewport cannot distort widget shape.
  */
 export interface PanelState {
   x: number;

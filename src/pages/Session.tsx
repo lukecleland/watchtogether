@@ -70,59 +70,25 @@ interface PositionTag {
 	h?: number;
 }
 
-// ── Resolution-independent panel sync ────────────────────────────────────
-// Panels are stored / rendered in local CSS pixels. Before sending over the
-// wire we convert to viewport fractions (0–1) so the remote peer can place
-// them proportionally on their own (possibly different-resolution) screen.
+// ── Absolute canvas geometry ─────────────────────────────────────────────
+// Panel coordinates and dimensions are world pixels. They must stay absolute:
+// scaling width and height by different viewport ratios distorts widgets when
+// a mobile client joins or a snapshot is restored on another screen.
 function normalisePanel(s: PanelState): PanelState {
-	return {
-		x: s.x / window.innerWidth,
-		y: s.y / window.innerHeight,
-		width: s.width / window.innerWidth,
-		height: s.height / window.innerHeight,
-		z: s.z
-	};
+	return { ...s };
 }
 
 function denormalisePanel(s: PanelState): PanelState {
-	return {
-		x: s.x * window.innerWidth,
-		y: s.y * window.innerHeight,
-		width: s.width * window.innerWidth,
-		height: s.height * window.innerHeight,
-		z: s.z
-	};
+	return { ...s };
 }
 // ─────────────────────────────────────────────────────────────────────────
 
 function defaultFixedPanels(): Record<PanelId, PanelState> {
-	const vw = window.innerWidth;
-	const isMobile = vw < 640;
-
-	if (isMobile) {
-		// On mobile: narrower panels, stacked vertically, extra top offset for notch
-		const videoW = Math.min(vw - 32, 320);
-		const videoH = Math.round((videoW * 9) / 16);
-		// Clears the top bar, the typical iOS safe-area inset, and the tool island
-		// that now sits centred beneath the bar
-		const topY = 156;
-		return {
-			local: { x: 16, y: topY, width: videoW, height: videoH, z: 10 },
-			remote: {
-				x: 16,
-				y: topY + videoH + 12,
-				width: videoW,
-				height: videoH,
-				z: 10
-			}
-		};
-	}
-
-	const videoW = Math.min(420, Math.floor((vw - 80) / 2));
-	const videoH = Math.round((videoW * 9) / 16);
-	const topY = 112; // below the top bar and the tool island beneath it
+	const videoW = 420;
+	const videoH = 236;
+	const topY = 112;
 	return {
-		local: { x: videoW + 40, y: topY, width: videoW, height: videoH, z: 10 },
+		local: { x: 460, y: topY, width: videoW, height: videoH, z: 10 },
 		remote: { x: 20, y: topY, width: videoW, height: videoH, z: 10 }
 	};
 }
@@ -465,18 +431,11 @@ export function Session({ roomCode, isHost }: SessionProps) {
 
 	const applyRoomSnapshot = useCallback((snapshot: RoomSnapshot) => {
 		ignoreLocalHydrationRef.current = true;
-		const scaleState = (state: PanelState): PanelState => ({
-			...state,
-			x: state.x / snapshot.viewport.width * window.innerWidth,
-			y: state.y / snapshot.viewport.height * window.innerHeight,
-			width: state.width / snapshot.viewport.width * window.innerWidth,
-			height: state.height / snapshot.viewport.height * window.innerHeight
-		});
-		setFixedPanels({ local: scaleState(snapshot.fixedPanels.remote), remote: scaleState(snapshot.fixedPanels.local) });
+		setFixedPanels({ local: { ...snapshot.fixedPanels.remote }, remote: { ...snapshot.fixedPanels.local } });
 		setDynamicPanels(snapshot.panels.map(panel => ({
 			id: panel.id,
 			type: panel.type,
-			state: scaleState(panel.state),
+			state: { ...panel.state },
 			initialVideoId: panel.initialVideoId,
 			initialUrl: panel.initialUrl,
 			note: panel.note,
@@ -484,17 +443,11 @@ export function Session({ roomCode, isHost }: SessionProps) {
 			playback: panel.playback,
 			recordings: []
 		})));
-		setPositionTags(snapshot.positionTags.map(tag => ({
-			...tag,
-			x: tag.x / snapshot.viewport.width * window.innerWidth,
-			y: tag.y / snapshot.viewport.height * window.innerHeight,
-			...(tag.w !== undefined ? { w: tag.w / snapshot.viewport.width * window.innerWidth } : {}),
-			...(tag.h !== undefined ? { h: tag.h / snapshot.viewport.height * window.innerHeight } : {})
-		})));
+		setPositionTags(snapshot.positionTags.map(tag => ({ ...tag })));
 		setDockedIds(snapshot.dockedIds.map(swapFixedId));
 		setPanelLabels(snapshot.panelLabels);
 		setCustomLabels(Object.fromEntries(Object.entries(snapshot.customLabels).map(([id, label]) => [swapFixedId(id), label])));
-		setCanvas({ ...snapshot.canvas, x: snapshot.canvas.x / snapshot.viewport.width * window.innerWidth, y: snapshot.canvas.y / snapshot.viewport.height * window.innerHeight });
+		setCanvas({ ...snapshot.canvas });
 		whiteboardRef.current?.replaceItems(snapshot.drawings);
 		latestSnapshotRef.current = snapshot;
 		saveRoomSnapshot(roomCode, snapshot);
@@ -513,14 +466,14 @@ export function Session({ roomCode, isHost }: SessionProps) {
 		if (msg.type === 'view-request') {
 			if (msg.id === 'local') {
 				const current = canvasStateRef.current;
-				sendSyncRef.current({ type: 'view-response', id: 'local', canvas: { x: current.x / window.innerWidth, y: current.y / window.innerHeight, scale: current.scale } });
+				sendSyncRef.current({ type: 'view-response', id: 'local', canvas: { ...current } });
 			}
 			return;
 		}
 		if (msg.type === 'view-response') {
 			if (pendingViewRequestRef.current === msg.id) {
 				pendingViewRequestRef.current = null;
-				setCanvas({ x: msg.canvas.x * window.innerWidth, y: msg.canvas.y * window.innerHeight, scale: msg.canvas.scale });
+				setCanvas({ ...msg.canvas });
 			}
 			return;
 		}
@@ -607,15 +560,13 @@ export function Session({ roomCode, isHost }: SessionProps) {
 			// The panel is gone, so any local dock chip pointing at it must go too
 			forgetPanel(msg.id);
 		} else if (msg.type === 'position-tag') {
-			// x/y/w/h arrive world-normalised; scale by our own viewport, exactly
-			// as the sender divided by theirs.
 			const tag: PositionTag = {
 				...(msg.w !== undefined && msg.h !== undefined
-					? { w: msg.w * window.innerWidth, h: msg.h * window.innerHeight }
+					? { w: msg.w, h: msg.h }
 					: {}),
 				id: msg.id,
-				x: msg.x * window.innerWidth,
-				y: msg.y * window.innerHeight,
+				x: msg.x,
+				y: msg.y,
 				label: msg.label
 			};
 			setPositionTags(prev => (prev.some(item => item.id === tag.id) ? prev : [...prev, tag]));
@@ -767,10 +718,10 @@ export function Session({ roomCode, isHost }: SessionProps) {
 			sendSync({
 				type: 'position-tag',
 				id,
-				x: r.x,
-				y: r.y,
-				w: r.w / window.innerWidth,
-				h: r.h / window.innerHeight,
+				x: tag.x,
+				y: tag.y,
+				w: tag.w,
+				h: tag.h,
 				label: tag.label
 			});
 		},
@@ -1080,7 +1031,7 @@ export function Session({ roomCode, isHost }: SessionProps) {
 	const handleParticipantDoubleClick = (entry: DockEntry) => {
 		if (entry.type === 'local') {
 			const current = canvasStateRef.current;
-			sendSync({ type: 'view-suggestion', id: 'local', canvas: { x: current.x / window.innerWidth, y: current.y / window.innerHeight, scale: current.scale } });
+			sendSync({ type: 'view-suggestion', id: 'local', canvas: { ...current } });
 			return;
 		}
 		pendingViewRequestRef.current = entry.id;
@@ -1577,8 +1528,8 @@ export function Session({ roomCode, isHost }: SessionProps) {
 			sendSync({
 				type: 'position-tag',
 				id: tag.id,
-				x: tag.x / window.innerWidth,
-				y: tag.y / window.innerHeight,
+				x: tag.x,
+				y: tag.y,
 				label: tag.label
 			});
 		}, 2000);
@@ -1874,7 +1825,7 @@ export function Session({ roomCode, isHost }: SessionProps) {
 				<div className="fixed left-3 top-16 z-[1000] flex items-center gap-2 rounded-xl border border-violet-500/60 bg-zinc-900/95 p-2 shadow-xl backdrop-blur">
 					<button
 						onClick={() => {
-							setCanvas({ x: viewSuggestion.canvas.x * window.innerWidth, y: viewSuggestion.canvas.y * window.innerHeight, scale: viewSuggestion.canvas.scale });
+							setCanvas({ ...viewSuggestion.canvas });
 							setViewSuggestion(null);
 						}}
 						className="rounded-lg bg-violet-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-violet-500">
