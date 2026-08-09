@@ -43,6 +43,8 @@ export interface RoomSnapshot {
   viewport: { width: number; height: number };
   panels: PersistedPanel[];
   fixedPanels: Record<"local" | "remote", PanelState>;
+  /** Per-peer participant panels, keyed by the stable PeerJS id seen locally. */
+  remotePanels?: Record<string, PanelState>;
   drawings: CanvasItem[];
   positionTags: PersistedPositionTag[];
   dockedIds: string[];
