@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import Peer, { type DataConnection, type MediaConnection } from "peerjs";
 
 export type PeerStatus = "idle" | "connecting" | "waiting" | "connected" | "error";
@@ -88,6 +88,7 @@ interface UsePeerResult {
   participantCount: number;
   status: PeerStatus;
   error: string | null;
+  replaceVideoTrack: (track: MediaStreamTrack | null) => Promise<void>;
 }
 
 type RoomRole = "owner" | "joiner";
@@ -166,6 +167,19 @@ export function usePeer({
 
   const peerRef = useRef<Peer | null>(null);
   const meshRef = useRef(new MeshDataConnection());
+  const callsRef = useRef<Map<string, MediaConnection>>(new Map());
+  const videoSendersRef = useRef<Set<RTCRtpSender>>(new Set());
+
+  const replaceVideoTrack = useCallback(async (track: MediaStreamTrack | null) => {
+    const replacements: Promise<void>[] = [];
+    for (const call of callsRef.current.values()) {
+      const sender = call.peerConnection.getSenders().find(candidate => candidate.track?.kind === "video" || videoSendersRef.current.has(candidate));
+      if (sender) videoSendersRef.current.add(sender);
+      if (sender) replacements.push(sender.replaceTrack(track));
+      else if (track) call.close();
+    }
+    await Promise.all(replacements);
+  }, []);
 
   useEffect(() => {
     if (!localStream) return;
@@ -179,6 +193,8 @@ export function usePeer({
     const mesh = meshRef.current;
     const dataConnections = new Map<string, DataConnection>();
     const calls = new Map<string, MediaConnection>();
+    callsRef.current = calls;
+    const mediaRetryTimers = new Map<string, ReturnType<typeof setTimeout>>();
     const streams = new Map<string, MediaStream>();
 
     const publishStreams = () => {
@@ -209,6 +225,8 @@ export function usePeer({
       mesh.closeAll();
       for (const call of calls.values()) call.close();
       calls.clear();
+      mediaRetryTimers.forEach(clearTimeout);
+      mediaRetryTimers.clear();
       streams.clear();
       setRemoteStreams([]);
       setDataConnection(null);
@@ -225,7 +243,19 @@ export function usePeer({
       }
     };
 
-    const setupCall = (call: MediaConnection) => {
+    const shouldInitiateCall = (peer: Peer, targetId: string) =>
+      peer.id.localeCompare(targetId) > 0 && localStream.getTracks().length > 0;
+
+    const scheduleCall = (peer: Peer, targetId: string, delay = 120) => {
+      if (!active || calls.has(targetId) || mediaRetryTimers.has(targetId)) return;
+      const timer = setTimeout(() => {
+        mediaRetryTimers.delete(targetId);
+        if (active && mesh.has(targetId) && shouldInitiateCall(peer, targetId)) callPeer(peer, targetId);
+      }, delay);
+      mediaRetryTimers.set(targetId, timer);
+    };
+
+    const setupCall = (peer: Peer, call: MediaConnection) => {
       const previous = calls.get(call.peer);
       calls.set(call.peer, call);
       if (previous && previous !== call) previous.close();
@@ -240,19 +270,21 @@ export function usePeer({
         calls.delete(call.peer);
         streams.delete(call.peer);
         publishStreams();
+        scheduleCall(peer, call.peer, 350);
       });
       call.on("error", () => {
         if (calls.get(call.peer) === call) {
           calls.delete(call.peer);
           streams.delete(call.peer);
           publishStreams();
+          scheduleCall(peer, call.peer, 350);
         }
       });
     };
 
     const callPeer = (peer: Peer, targetId: string) => {
       if (calls.has(targetId) || localStream.getTracks().length === 0) return;
-      setupCall(peer.call(targetId, localStream));
+      setupCall(peer, peer.call(targetId, localStream));
     };
 
     const dialMeshPeer = (peer: Peer, targetId: string) => {
@@ -270,7 +302,6 @@ export function usePeer({
           metadata: { canSendMedia: localStream.getTracks().length > 0 },
         }),
       );
-      callPeer(peer, targetId);
     };
 
     const handleRoster = (peer: Peer, peers: string[]) => {
@@ -311,7 +342,8 @@ export function usePeer({
         const remoteCanSendMedia =
           (connection.metadata as { canSendMedia?: boolean } | undefined)
             ?.canSendMedia ?? true;
-        if (!remoteCanSendMedia) callPeer(peer, connection.peer);
+        if (!remoteCanSendMedia && localStream!.getTracks().length > 0) callPeer(peer, connection.peer);
+        else scheduleCall(peer, connection.peer);
       });
 
       connection.on("data", raw => {
@@ -376,7 +408,7 @@ export function usePeer({
           return;
         }
         call.answer(localStream);
-        setupCall(call);
+        setupCall(peer, call);
       });
 
       peer.on("open", () => {
@@ -432,10 +464,11 @@ export function usePeer({
       clearTransition();
       if (signalingTimer) clearTimeout(signalingTimer);
       clearMesh();
+      if (callsRef.current === calls) callsRef.current = new Map();
       peerRef.current?.destroy();
       peerRef.current = null;
     };
   }, [localStream, roomCode, isHost]);
 
-  return { remoteStreams, dataConnection, participantCount, status, error };
+  return { remoteStreams, dataConnection, participantCount, status, error, replaceVideoTrack };
 }
