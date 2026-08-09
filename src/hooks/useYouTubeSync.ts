@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useEffectEvent } from 'react';
 import type { RoomDataConnection } from './usePeer';
 import type { CodeContent, NoteContent, PanelState } from '../types/panels';
+import type { RoomSnapshot } from '../utils/roomPersistence';
 
 /**
  * useYouTubeSync — binds a message handler to a PeerJS DataConnection and
@@ -34,6 +35,8 @@ import type { CodeContent, NoteContent, PanelState } from '../types/panels';
  *   does — your "You" is their "Guest".
  */
 export type SyncMessage =
+	| { type: 'room-state-request' }
+	| { type: 'room-state-snapshot'; snapshot: RoomSnapshot }
 	| { type: 'load'; id: string; videoId: string }
 	| { type: 'play'; id: string; time: number; at?: number }
 	| { type: 'pause'; id: string; time: number; at?: number }

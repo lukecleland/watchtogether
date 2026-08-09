@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { DockButton } from "./Dock";
 import { useYouTubeSync, type SyncMessage } from "../hooks/useYouTubeSync";
 import type { RoomDataConnection } from "../hooks/usePeer";
-import type { RecordingClip } from "../types/panels";
+import type { PanelPlayback, RecordingClip } from "../types/panels";
 
 export interface RecordingStatus {
   recording: boolean;
@@ -20,6 +20,8 @@ interface ScreenRecorderWidgetProps {
   onClose?: () => void;
   docked?: boolean;
   onToggleDock?: () => void;
+  initialPlayback?: PanelPlayback;
+  onPlaybackChange?: (playback: PanelPlayback) => void;
 }
 
 function recordingMimeType(): string {
@@ -46,9 +48,11 @@ export function ScreenRecorderWidget({
   onClose,
   docked = false,
   onToggleDock,
+  initialPlayback,
+  onPlaybackChange,
 }: ScreenRecorderWidgetProps) {
   const [clips, setClips] = useState<RecordingClip[]>(recordings);
-  const [selectedId, setSelectedId] = useState<string | null>(recordings[0]?.id ?? null);
+  const [selectedId, setSelectedId] = useState<string | null>(initialPlayback?.recordingId ?? recordings[0]?.id ?? null);
   const [recording, setRecording] = useState(false);
   const [paused, setPaused] = useState(false);
   const [errors, setErrors] = useState<string[]>([]);
@@ -59,10 +63,13 @@ export function ScreenRecorderWidget({
   const urlsRef = useRef<Map<string, string>>(new Map());
   const syncUntilRef = useRef(0);
   const onStatusChangeRef = useRef(onStatusChange);
+  const initialPlaybackRef = useRef(initialPlayback);
+  const onPlaybackChangeRef = useRef(onPlaybackChange);
 
   useEffect(() => {
     onStatusChangeRef.current = onStatusChange;
-  }, [onStatusChange]);
+    onPlaybackChangeRef.current = onPlaybackChange;
+  }, [onPlaybackChange, onStatusChange]);
 
   const urlFor = useCallback((clip: RecordingClip) => {
     const existing = urlsRef.current.get(clip.id);
@@ -76,10 +83,18 @@ export function ScreenRecorderWidget({
     const video = videoRef.current;
     if (!video) return;
     video.srcObject = null;
+    video.muted = false;
     const url = urlFor(clip);
     if (video.src !== url) {
       video.src = url;
       video.load();
+      video.addEventListener("loadedmetadata", () => {
+        const saved = initialPlaybackRef.current;
+        if (!saved || saved.recordingId !== clip.id) return;
+        video.currentTime = Math.min(saved.time, video.duration || saved.time);
+        if (saved.playing) void video.play().catch(() => {});
+        initialPlaybackRef.current = undefined;
+      }, { once: true });
     }
     setSelectedId(clip.id);
   }, [urlFor]);
@@ -101,6 +116,15 @@ export function ScreenRecorderWidget({
   useEffect(() => {
     onStatusChangeRef.current({ recording, paused, errors });
   }, [errors, paused, recording]);
+
+  useEffect(() => {
+    if (recording || !selectedId || !onPlaybackChange) return;
+    const timer = setInterval(() => {
+      const video = videoRef.current;
+      if (video) onPlaybackChangeRef.current?.({ recordingId: selectedId, time: video.currentTime, playing: !video.paused });
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [onPlaybackChange, recording, selectedId]);
 
   useEffect(() => () => {
     const recorder = recorderRef.current;

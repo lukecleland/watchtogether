@@ -2,6 +2,7 @@ import { useState, useRef, useCallback, useEffect } from "react";
 import { DockButton } from "./Dock";
 import { useYouTubeSync, type SyncMessage } from "../hooks/useYouTubeSync";
 import type { RoomDataConnection } from "../hooks/usePeer";
+import type { PanelPlayback } from "../types/panels";
 
 function formatTime(seconds: number): string {
   if (!isFinite(seconds)) return "0:00";
@@ -81,6 +82,8 @@ export function AudioPlayer({
   onTrackChange,
   transferProgress,
   onFileChosen,
+  initialPlayback,
+  onPlaybackChange,
 }: {
   id: string;
   dataConnection: RoomDataConnection | null;
@@ -101,6 +104,8 @@ export function AudioPlayer({
    * from the peer, which would bounce it straight back.
    */
   onFileChosen?: (file: File) => void;
+  initialPlayback?: PanelPlayback;
+  onPlaybackChange?: (playback: PanelPlayback) => void;
 }) {
   const audioRef = useRef<HTMLAudioElement>(null);
   const objectUrlRef = useRef<string | null>(null);
@@ -111,9 +116,12 @@ export function AudioPlayer({
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
-  const [volume, setVolume] = useState(1);
+  const [volume, setVolume] = useState(initialPlayback?.volume ?? 1);
   const [minimised, setMinimised] = useState(false);
   const [isDragOver, setIsDragOver] = useState(false);
+  const initialPlaybackRef = useRef(initialPlayback);
+  const onPlaybackChangeRef = useRef(onPlaybackChange);
+  onPlaybackChangeRef.current = onPlaybackChange;
 
   const handleRemoteSync = useCallback(
     (message: SyncMessage) => {
@@ -169,6 +177,13 @@ export function AudioPlayer({
     objectUrlRef.current = url;
     audioRef.current.src = url;
     audioRef.current.load();
+    audioRef.current.addEventListener("loadedmetadata", () => {
+      const saved = initialPlaybackRef.current;
+      if (!saved || !audioRef.current) return;
+      audioRef.current.currentTime = Math.min(saved.time, audioRef.current.duration || saved.time);
+      if (saved.playing) void audioRef.current.play().catch(() => {});
+      initialPlaybackRef.current = undefined;
+    }, { once: true });
     const name = file.name.replace(/\.[^.]+$/, "");
     setFileName(name);
     onTrackChange?.(name);
@@ -276,6 +291,15 @@ export function AudioPlayer({
     if (audioRef.current)
       audioRef.current.volume = Math.min(1, volume * spatialVolume);
   }, [spatialVolume, volume]);
+
+  useEffect(() => {
+    if (!fileName || !onPlaybackChange) return;
+    const timer = setInterval(() => {
+      const audio = audioRef.current;
+      if (audio) onPlaybackChangeRef.current?.({ time: audio.currentTime, playing: !audio.paused, volume });
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [fileName, onPlaybackChange, volume]);
 
   // ── Audio element events ──────────────────────────────────────────────
   useEffect(() => {

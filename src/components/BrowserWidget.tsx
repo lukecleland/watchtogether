@@ -26,6 +26,7 @@ export function BrowserWidget({
   docked = false,
   onToggleDock,
   onTitleChange,
+  onUrlChange,
 }: {
   id: string;
   dataConnection: RoomDataConnection | null;
@@ -34,6 +35,7 @@ export function BrowserWidget({
   docked?: boolean;
   onToggleDock?: () => void;
   onTitleChange?: (title: string) => void;
+  onUrlChange?: (url: string) => void;
 }) {
   const [inputValue, setInputValue] = useState(initialUrl ?? "");
   const [url, setUrl] = useState(initialUrl ?? "");
@@ -47,8 +49,9 @@ export function BrowserWidget({
       setUrl(message.url);
       setMinimised(false);
       onTitleChange?.(new URL(message.url).hostname);
+      onUrlChange?.(message.url);
     },
-    [id, onTitleChange],
+    [id, onTitleChange, onUrlChange],
   );
   const { sendSync } = useYouTubeSync({
     dataConnection,
@@ -60,6 +63,7 @@ export function BrowserWidget({
     setUrl(nextUrl);
     setMinimised(false);
     onTitleChange?.(new URL(nextUrl).hostname);
+    onUrlChange?.(nextUrl);
     sendSync({ type: "browser-load", id, url: nextUrl });
   };
 
