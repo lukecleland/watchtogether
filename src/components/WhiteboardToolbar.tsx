@@ -26,11 +26,10 @@ import { FONT_STACKS, METALS, metalFor, TEXT_SIZES, type Nib, type TextFont } fr
  * The panel sits *below* the island rather than beside it so the two can never
  * collide on a narrow screen.
  *
- * The props are unchanged from the previous flat toolbar — this is a
- * presentation change only, so Session.tsx is untouched.
+ * Tool selection and contextual styling are controlled by Session.tsx.
  */
 
-type Tool = "pen" | "eraser" | "text" | "region";
+type Tool = "pointer" | "pen" | "eraser" | "text" | "region";
 
 interface WhiteboardToolbarProps {
   tool: Tool;
@@ -227,7 +226,7 @@ export function WhiteboardToolbar({
     // The region tool has no options — every section of the panel (colour,
     // size) belongs to the drawing tools, so opening it here would show
     // controls that affect nothing.
-    if (t === "region") {
+    if (t === "pointer" || t === "region") {
       onToolChange(t);
       setPanelOpen(false);
       return;
@@ -246,10 +245,10 @@ export function WhiteboardToolbar({
   const toolButton = (t: Tool, label: string, path: string, swatch = false) => (
     <button
       onClick={() => selectTool(t)}
-      title={tool === t && t !== "region" ? `${label} — tap for options` : label}
+      title={tool === t && t !== "pointer" && t !== "region" ? `${label} — tap for options` : label}
       aria-label={label}
       aria-pressed={tool === t}
-      aria-expanded={tool === t && t !== "region" ? panelOpen : undefined}
+      aria-expanded={tool === t && t !== "pointer" && t !== "region" ? panelOpen : undefined}
       className={`relative w-9 h-9 flex items-center justify-center rounded-xl transition-colors ${
         tool === t
           ? "bg-violet-600 text-white"
@@ -272,7 +271,7 @@ export function WhiteboardToolbar({
         />
       )}
 
-      {tool === t && t !== "region" && (
+      {tool === t && t !== "pointer" && t !== "region" && (
         <svg
           aria-hidden="true"
           className="absolute -bottom-0.5 right-0.5 w-2.5 h-2.5 opacity-80"
@@ -293,6 +292,11 @@ export function WhiteboardToolbar({
         style={{ position: "fixed", zIndex: 999, top: TOP_OFFSET }}
         className="left-1/2 -translate-x-1/2 flex items-center gap-1 bg-zinc-900/95 backdrop-blur border border-zinc-700 rounded-2xl p-1.5 shadow-xl select-none"
       >
+        {toolButton(
+          "pointer",
+          "Pointer",
+          "M5 3l14 9-6.5 1.5L9 20 5 3z"
+        )}
         {toolButton(
           "pen",
           "Pen",

@@ -266,7 +266,7 @@ export function DraggablePanel({
           // block whiteboard strokes; only visible panels opt back in.
           pointerEvents: "auto",
         }}
-        className={`absolute ${className}`}
+        className={`draggable-panel absolute ${className}`}
         onPointerDown={onBringToFront}
         onDoubleClick={(event) => {
           const target = event.target as HTMLElement;

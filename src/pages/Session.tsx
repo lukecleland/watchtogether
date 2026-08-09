@@ -231,7 +231,7 @@ export function Session({ roomCode, isHost }: SessionProps) {
 
 	// Whiteboard
 	const whiteboardRef = useRef<WhiteboardHandle>(null);
-	const [wbTool, setWbTool] = useState<'pen' | 'eraser' | 'text' | 'region'>('pen');
+	const [wbTool, setWbTool] = useState<'pointer' | 'pen' | 'eraser' | 'text' | 'region'>('pointer');
 	const [wbColor, setWbColor] = useState('#ffffff');
 	const [wbWidth, setWbWidth] = useState(3);
 	const [wbNib, setWbNib] = useState<Nib>('ballpoint');
@@ -1226,9 +1226,9 @@ export function Session({ roomCode, isHost }: SessionProps) {
 		longPressRef.current = null;
 	};
 
-	// Middle or right-click drag pans without space held
+	// Middle or right-click drag on the background pans without space held
 	const handleOuterMouseDown = (e: React.MouseEvent<HTMLDivElement>) => {
-		if (e.button === 1 || e.button === 2) {
+		if ((e.button === 1 || e.button === 2) && e.target instanceof HTMLCanvasElement) {
 			e.preventDefault();
 			startPan(e.clientX, e.clientY);
 			return;
@@ -1309,7 +1309,7 @@ export function Session({ roomCode, isHost }: SessionProps) {
 			onMouseUp={handleOuterMouseUp}
 			onMouseLeave={handleOuterMouseUp}
 			onContextMenu={e => {
-				if (isPanningRef.current) e.preventDefault();
+				if (e.target instanceof HTMLCanvasElement) e.preventDefault();
 			}}
 			onDragOver={e => {
 				const hasFile = e.dataTransfer.types.includes('Files');
@@ -1497,6 +1497,7 @@ export function Session({ roomCode, isHost }: SessionProps) {
 			<Whiteboard
 				ref={whiteboardRef}
 				tool={wbTool}
+				isPanning={isGrabbing}
 				color={activeColor}
 				width={wbWidth}
 				nib={wbNib}

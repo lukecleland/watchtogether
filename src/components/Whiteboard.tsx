@@ -82,7 +82,9 @@ export interface WhiteboardHandle {
 }
 
 interface WhiteboardProps {
-  tool: "pen" | "eraser" | "text" | "region";
+  tool: "pointer" | "pen" | "eraser" | "text" | "region";
+  /** True while the session is actively panning the canvas. */
+  isPanning?: boolean;
   color: string;
   width: number; // raw toolbar pixel size (3 / 8 / 16)
   nib: Nib;
@@ -127,6 +129,7 @@ const Whiteboard = forwardRef<WhiteboardHandle, WhiteboardProps>(
   (
     {
       tool,
+      isPanning = false,
       color,
       width,
       nib,
@@ -516,6 +519,7 @@ const Whiteboard = forwardRef<WhiteboardHandle, WhiteboardProps>(
       // Touch has dedicated multi-touch-aware handlers below.
       if (e.pointerType === "touch") return;
       if (e.button !== 0) return; // left-click only; middle-click reserved for panning
+      if (tool === "pointer") return;
       // Text is placed on click (see handleCanvasClick) — opening the caret on
       // pointer-down would mount the input mid-gesture, and the pointer-up that
       // follows lands on the canvas and blurs it straight back shut.
@@ -580,6 +584,7 @@ const Whiteboard = forwardRef<WhiteboardHandle, WhiteboardProps>(
     // ── Touch handlers (iOS / Android) ───────────────────────────────────
 
     const handleTouchStart = (e: React.TouchEvent<HTMLCanvasElement>) => {
+      if (tool === "pointer") return;
       // Text is placed on the click the browser synthesises after the tap
       if (tool === "text") return;
       // Multi-touch is reserved for canvas pinch-to-zoom — cancel any drawing
@@ -659,11 +664,15 @@ const Whiteboard = forwardRef<WhiteboardHandle, WhiteboardProps>(
             left: 0,
             zIndex: 0,
             cursor:
-              tool === "eraser"
-                ? "cell"
-                : tool === "text"
-                  ? "text"
-                  : "crosshair",
+              isPanning
+                ? "grabbing"
+                : tool === "pointer"
+                  ? "default"
+                  : tool === "eraser"
+                    ? "cell"
+                    : tool === "text"
+                      ? "text"
+                      : "crosshair",
             touchAction: "none",
           }}
           onClick={handleCanvasClick}
