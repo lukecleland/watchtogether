@@ -24,6 +24,20 @@ body {
   padding-bottom: env(safe-area-inset-bottom);
 }
 
+/* Any non-interactive surface of a floating widget can move it. Keep that
+ * affordance visible across content such as video, not just the title bar. */
+.draggable-panel {
+  cursor: grab;
+}
+
+.draggable-panel.react-draggable-dragging {
+  cursor: grabbing;
+}
+
+.draggable-panel :is(input, button, a, textarea, select, iframe, .no-drag, [contenteditable="true"]) {
+  cursor: auto;
+}
+
 @keyframes record-spin {
   to {
     transform: rotate(360deg);
