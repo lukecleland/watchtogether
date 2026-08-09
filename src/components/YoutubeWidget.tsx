@@ -3,6 +3,7 @@ import { useYouTubeSync, type SyncMessage } from "../hooks/useYouTubeSync";
 import { useYouTubePlayer } from "../hooks/useYouTubePlayer";
 import { DockButton } from "./Dock";
 import type { RoomDataConnection } from "../hooks/usePeer";
+import type { PanelPlayback } from "../types/panels";
 
 /**
  * YoutubeWidget — YouTube player with URL input and bidirectional sync.
@@ -33,6 +34,9 @@ interface YoutubeWidgetProps {
   onToggleDock?: () => void;
   /** Reports the loaded video's title so the parent can label the dock chip. */
   onTitleChange?: (title: string) => void;
+  initialPlayback?: PanelPlayback;
+  onPlaybackChange?: (playback: PanelPlayback) => void;
+  onVideoChange?: (videoId: string) => void;
 }
 
 function parseVideoId(input: string): string | null {
@@ -72,6 +76,9 @@ export function YoutubeWidget({
   docked = false,
   onToggleDock,
   onTitleChange,
+  initialPlayback,
+  onPlaybackChange,
+  onVideoChange,
 }: YoutubeWidgetProps) {
   const [hasVideo, setHasVideo] = useState(false);
   const [inputValue, setInputValue] = useState(() =>
@@ -92,6 +99,9 @@ export function YoutubeWidget({
   const onTitleChangeRef = useRef(onTitleChange);
   onTitleChangeRef.current = onTitleChange;
   const lastReportedTitleRef = useRef<string | null>(null);
+  const playbackStateRef = useRef({ playing: initialPlayback?.playing ?? false });
+  const onPlaybackChangeRef = useRef(onPlaybackChange);
+  onPlaybackChangeRef.current = onPlaybackChange;
 
   // Called by useYouTubePlayer when the player's playback state changes
   const handleStateChange = useCallback(
@@ -110,6 +120,8 @@ export function YoutubeWidget({
       // Suppress all state changes fired within the remote-sync window.
       if (Date.now() < syncUntilRef.current) return;
       const time = getCurrentTime();
+      playbackStateRef.current.playing = state === 1;
+      onPlaybackChangeRef.current?.({ time, playing: state === 1 });
       const at = Date.now();
       if (state === 1) sendSyncRef.current({ type: "play", id, time, at });
       if (state === 2) sendSyncRef.current({ type: "pause", id, time, at });
@@ -117,7 +129,7 @@ export function YoutubeWidget({
     [id],
   );
 
-  const { loadVideo, playVideo, pauseVideo, seekTo, setVolume, getTitle } =
+  const { loadVideo, playVideo, pauseVideo, seekTo, setVolume, restorePlayback, getCurrentTime, getTitle } =
     useYouTubePlayer(playerContainerRef, { onStateChange: handleStateChange });
   getTitleRef.current = getTitle;
 
@@ -131,11 +143,20 @@ export function YoutubeWidget({
     if (initialVideoId) {
       setInputValue(watchUrl(initialVideoId));
       setHasVideo(true);
-      loadVideo(initialVideoId);
+      if (initialPlayback) restorePlayback(initialVideoId, initialPlayback.time, initialPlayback.playing);
+      else loadVideo(initialVideoId);
     }
     // Only on mount
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  useEffect(() => {
+    if (!hasVideo || !onPlaybackChange) return;
+    const timer = setInterval(() => {
+      onPlaybackChangeRef.current?.({ time: getCurrentTime(), playing: playbackStateRef.current.playing });
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [getCurrentTime, hasVideo, onPlaybackChange]);
 
   const handleRemoteSync = useCallback(
     (msg: SyncMessage) => {
@@ -145,6 +166,7 @@ export function YoutubeWidget({
         setHasVideo(true);
         setMinimised(false);
         loadVideo(msg.videoId);
+        onVideoChange?.(msg.videoId);
       } else if (msg.type === "play") {
         if (msg.id !== id) return;
         syncUntilRef.current = Date.now() + 500;
@@ -161,7 +183,7 @@ export function YoutubeWidget({
         seekTo(msg.time);
       }
     },
-    [id, loadVideo, playVideo, pauseVideo, seekTo],
+    [id, loadVideo, onVideoChange, playVideo, pauseVideo, seekTo],
   );
 
   const { sendSync } = useYouTubeSync({
@@ -181,6 +203,7 @@ export function YoutubeWidget({
     setHasVideo(true);
     setMinimised(false);
     loadVideo(videoId);
+    onVideoChange?.(videoId);
     sendSync({ type: "load", id, videoId });
   };
 
@@ -193,6 +216,7 @@ export function YoutubeWidget({
       setHasVideo(true);
       setMinimised(false);
       loadVideo(videoId);
+      onVideoChange?.(videoId);
       sendSync({ type: "load", id, videoId });
     }
   };

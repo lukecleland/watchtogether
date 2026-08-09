@@ -48,6 +48,7 @@ import type { PanelId, PanelState, DynamicPanel, NoteContent, CodeContent } from
 import { chordsOf, defaultNoteContent } from '../types/panels';
 import { TransferReceiver, base64ToChunk, chunkCount, sendFileInChunks } from '../utils/fileTransfer';
 import { codeFromText } from '../utils/code';
+import { loadRoomMedia, loadRoomSnapshot, ROOM_STATE_VERSION, saveRoomMedia, saveRoomSnapshot, type RoomSnapshot } from '../utils/roomPersistence';
 
 interface SessionProps {
 	roomCode: string;
@@ -162,16 +163,27 @@ function parseYouTubeVideoId(input: string): string | null {
 }
 
 export function Session({ roomCode, isHost }: SessionProps) {
+	const [savedRoom] = useState(() => loadRoomSnapshot(roomCode));
 	const [localStream, setLocalStream] = useState<MediaStream | null>(null);
 	const [mediaError, setMediaError] = useState<string | null>(null);
-	const [fixedPanels, setFixedPanels] = useState<Record<PanelId, PanelState>>(defaultFixedPanels);
+	const [fixedPanels, setFixedPanels] = useState<Record<PanelId, PanelState>>(() => savedRoom?.fixedPanels ?? defaultFixedPanels());
 	const [remotePanelStates, setRemotePanelStates] = useState<Record<string, PanelState>>({});
-	const [dynamicPanels, setDynamicPanels] = useState<DynamicPanel[]>([]);
-	const [positionTags, setPositionTags] = useState<PositionTag[]>([]);
+	const [dynamicPanels, setDynamicPanels] = useState<DynamicPanel[]>(() => savedRoom?.panels.map(panel => ({
+		id: panel.id,
+		type: panel.type,
+		state: panel.state,
+		initialVideoId: panel.initialVideoId,
+		initialUrl: panel.initialUrl,
+		note: panel.note,
+		code: panel.code,
+		playback: panel.playback,
+		recordings: []
+	})) ?? []);
+	const [positionTags, setPositionTags] = useState<PositionTag[]>(() => savedRoom?.positionTags ?? []);
 	const positionTagsRef = useRef<PositionTag[]>([]);
 	positionTagsRef.current = positionTags;
 	// Tracks the highest z-index currently in use so we can raise panels on click
-	const topZRef = useRef(20);
+	const topZRef = useRef(Math.max(20, ...(savedRoom?.panels.map(panel => panel.state.z) ?? []), ...(savedRoom ? Object.values(savedRoom.fixedPanels).map(panel => panel.z) : [])));
 	// Background drag-over indicator
 	const [bgDragOver, setBgDragOver] = useState(false);
 	// The "nobody here yet" nudge. Dismissing it is final for the session —
@@ -190,7 +202,7 @@ export function Session({ roomCode, isHost }: SessionProps) {
 	} | null>(null);
 
 	// ── Infinite canvas transform ────────────────────────────────────────────
-	const [canvas, setCanvas] = useState({ x: 0, y: 0, scale: 1 });
+	const [canvas, setCanvas] = useState(() => savedRoom?.canvas ?? { x: 0, y: 0, scale: 1 });
 	const canvasStateRef = useRef({ x: 0, y: 0, scale: 1 });
 	canvasStateRef.current = canvas;
 	const [isPanMode, setIsPanMode] = useState(false);
@@ -207,7 +219,7 @@ export function Session({ roomCode, isHost }: SessionProps) {
 	// Panel ids bookmarked in the dock, in the order they were added. Tagging
 	// and renaming are shared with the peer (see `dock-tag` / `dock-rename`);
 	// dismissing is local, so neither person can clear the other's bar.
-	const [dockedIds, setDockedIds] = useState<string[]>([]);
+	const [dockedIds, setDockedIds] = useState<string[]>(() => savedRoom?.dockedIds ?? []);
 	// ── File transfer ────────────────────────────────────────────────────────
 	// Files stream in chunks rather than arriving whole, so a panel can appear
 	// immediately and show how far along its contents are.
@@ -244,15 +256,21 @@ export function Session({ roomCode, isHost }: SessionProps) {
 	// Self-describing label per panel id, used for its dock chip: the YouTube
 	// video's title or the audio file's name. Panels report these upward once
 	// their content is known, so two YouTube chips aren't indistinguishable.
-	const [panelLabels, setPanelLabels] = useState<Record<string, string>>({});
+	const [panelLabels, setPanelLabels] = useState<Record<string, string>>(() => savedRoom?.panelLabels ?? {});
 	// User-set chip names. Take precedence over the derived label above, and
 	// survive the underlying content changing — if you named it, you meant it.
-	const [customLabels, setCustomLabels] = useState<Record<string, string>>({});
+	const [customLabels, setCustomLabels] = useState<Record<string, string>>(() => savedRoom?.customLabels ?? {});
 	// In-flight "fly to panel" animation, so a second jump cancels the first
 	const jumpAnimRef = useRef<number | null>(null);
 
 	// Whiteboard
 	const whiteboardRef = useRef<WhiteboardHandle>(null);
+	const [whiteboardRevision, setWhiteboardRevision] = useState(0);
+	const whiteboardSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+	const markWhiteboardDirty = useCallback(() => {
+		if (whiteboardSaveTimerRef.current) clearTimeout(whiteboardSaveTimerRef.current);
+		whiteboardSaveTimerRef.current = setTimeout(() => setWhiteboardRevision(value => value + 1), 400);
+	}, []);
 	const [wbTool, setWbTool] = useState<'pointer' | 'pen' | 'eraser' | 'text' | 'region'>('pointer');
 	const [wbColor, setWbColor] = useState('#ffffff');
 	const [wbWidth, setWbWidth] = useState(3);
@@ -264,6 +282,86 @@ export function Session({ roomCode, isHost }: SessionProps) {
 	const [wbHighlightColor, setWbHighlightColor] = useState('#facc15');
 	const activeColor = wbNib === 'highlighter' ? wbHighlightColor : wbColor;
 	const setActiveColor = (c: string) => (wbNib === 'highlighter' ? setWbHighlightColor(c) : setWbColor(c));
+	const latestSnapshotRef = useRef<RoomSnapshot | null>(savedRoom);
+	const sendRoomStateRef = useRef<() => void>(() => {});
+	const persistedMediaRef = useRef<WeakSet<File>>(new WeakSet());
+	const mediaHydratedRef = useRef(!savedRoom);
+	const mediaHydrationPromiseRef = useRef<Promise<void>>(Promise.resolve());
+	const pendingRoomRequestRef = useRef(false);
+	const ignoreLocalHydrationRef = useRef(false);
+
+	useEffect(() => {
+		if (savedRoom?.drawings.length) {
+			requestAnimationFrame(() => whiteboardRef.current?.replaceItems(savedRoom.drawings));
+		}
+		if (!savedRoom) return;
+		let cancelled = false;
+		const hydration = Promise.all(savedRoom.panels.map(async persisted => {
+			if (persisted.type === 'audio' && persisted.audioFileName) {
+				const file = await loadRoomMedia(roomCode, persisted.id);
+				if (!cancelled && !ignoreLocalHydrationRef.current && file) setDynamicPanels(prev => prev.map(panel => panel.id === persisted.id ? { ...panel, initialFile: file } : panel));
+			}
+			if (persisted.type === 'recorder' && persisted.recordings?.length) {
+				const recordings = (await Promise.all(persisted.recordings.map(async recording => {
+					const file = await loadRoomMedia(roomCode, persisted.id, recording.id);
+					return file ? { id: recording.id, name: recording.name, file } : null;
+				}))).filter(recording => recording !== null);
+				if (!cancelled && !ignoreLocalHydrationRef.current) setDynamicPanels(prev => prev.map(panel => panel.id === persisted.id ? { ...panel, recordings } : panel));
+			}
+		})).then(() => undefined).catch(() => undefined).finally(() => {
+			mediaHydratedRef.current = true;
+			if (pendingRoomRequestRef.current) {
+				pendingRoomRequestRef.current = false;
+				setTimeout(() => sendRoomStateRef.current(), 0);
+			}
+		});
+		mediaHydrationPromiseRef.current = hydration;
+		void hydration;
+		return () => { cancelled = true; };
+	}, [roomCode, savedRoom, savedRoom?.panels]);
+
+	useEffect(() => {
+		const snapshot: RoomSnapshot = {
+			version: ROOM_STATE_VERSION,
+			savedAt: Date.now(),
+			viewport: { width: window.innerWidth, height: window.innerHeight },
+			fixedPanels,
+			panels: dynamicPanels.map(panel => ({
+				id: panel.id,
+				type: panel.type,
+				state: panel.state,
+				initialVideoId: panel.initialVideoId,
+				initialUrl: panel.initialUrl,
+				note: panel.note,
+				code: panel.code,
+				audioFileName: panel.initialFile?.name ?? savedRoom?.panels.find(saved => saved.id === panel.id)?.audioFileName,
+				recordings: panel.recordings?.length
+					? panel.recordings.map(recording => ({ id: recording.id, name: recording.name }))
+					: savedRoom?.panels.find(saved => saved.id === panel.id)?.recordings,
+				playback: panel.playback
+			})),
+			drawings: whiteboardRef.current?.getItems() ?? savedRoom?.drawings ?? [],
+			positionTags,
+			dockedIds,
+			panelLabels,
+			customLabels,
+			canvas
+		};
+		latestSnapshotRef.current = snapshot;
+		const saveTimer = setTimeout(() => saveRoomSnapshot(roomCode, snapshot), 250);
+		dynamicPanels.forEach(panel => {
+			if (panel.initialFile && !persistedMediaRef.current.has(panel.initialFile)) {
+				persistedMediaRef.current.add(panel.initialFile);
+				void saveRoomMedia(roomCode, panel.id, panel.initialFile).catch(() => {});
+			}
+			panel.recordings?.forEach(recording => {
+				if (persistedMediaRef.current.has(recording.file)) return;
+				persistedMediaRef.current.add(recording.file);
+				void saveRoomMedia(roomCode, panel.id, recording.file, recording.id).catch(() => {});
+			});
+		});
+		return () => clearTimeout(saveTimer);
+	}, [canvas, customLabels, dockedIds, dynamicPanels, fixedPanels, panelLabels, positionTags, roomCode, savedRoom?.drawings, savedRoom?.panels, whiteboardRevision]);
 
 	const { remoteStreams, dataConnection, participantCount, status, error } = usePeer({
 		roomCode,
@@ -360,8 +458,53 @@ export function Session({ roomCode, isHost }: SessionProps) {
 		acknowledgePulse(id);
 	}, [acknowledgePulse]);
 
+	const applyRoomSnapshot = useCallback((snapshot: RoomSnapshot) => {
+		ignoreLocalHydrationRef.current = true;
+		const scaleState = (state: PanelState): PanelState => ({
+			...state,
+			x: state.x / snapshot.viewport.width * window.innerWidth,
+			y: state.y / snapshot.viewport.height * window.innerHeight,
+			width: state.width / snapshot.viewport.width * window.innerWidth,
+			height: state.height / snapshot.viewport.height * window.innerHeight
+		});
+		setFixedPanels({ local: scaleState(snapshot.fixedPanels.remote), remote: scaleState(snapshot.fixedPanels.local) });
+		setDynamicPanels(snapshot.panels.map(panel => ({
+			id: panel.id,
+			type: panel.type,
+			state: scaleState(panel.state),
+			initialVideoId: panel.initialVideoId,
+			initialUrl: panel.initialUrl,
+			note: panel.note,
+			code: panel.code,
+			playback: panel.playback,
+			recordings: []
+		})));
+		setPositionTags(snapshot.positionTags.map(tag => ({
+			...tag,
+			x: tag.x / snapshot.viewport.width * window.innerWidth,
+			y: tag.y / snapshot.viewport.height * window.innerHeight,
+			...(tag.w !== undefined ? { w: tag.w / snapshot.viewport.width * window.innerWidth } : {}),
+			...(tag.h !== undefined ? { h: tag.h / snapshot.viewport.height * window.innerHeight } : {})
+		})));
+		setDockedIds(snapshot.dockedIds.map(swapFixedId));
+		setPanelLabels(snapshot.panelLabels);
+		setCustomLabels(Object.fromEntries(Object.entries(snapshot.customLabels).map(([id, label]) => [swapFixedId(id), label])));
+		setCanvas({ ...snapshot.canvas, x: snapshot.canvas.x / snapshot.viewport.width * window.innerWidth, y: snapshot.canvas.y / snapshot.viewport.height * window.innerHeight });
+		whiteboardRef.current?.replaceItems(snapshot.drawings);
+		latestSnapshotRef.current = snapshot;
+		saveRoomSnapshot(roomCode, snapshot);
+	}, [roomCode]);
+
 	// Panel sync — wired to the same data channel as YouTube sync
 	const handleRemoteSync = useCallback((msg: SyncMessage) => {
+		if (msg.type === 'room-state-request') {
+			if (isHost) sendRoomStateRef.current();
+			return;
+		}
+		if (msg.type === 'room-state-snapshot') {
+			if (!isHost) applyRoomSnapshot(msg.snapshot);
+			return;
+		}
 		// Every message that carries panel geometry carries a z with it
 		if ('state' in msg) noteRemoteZ(msg.state.z);
 
@@ -513,14 +656,18 @@ export function Session({ roomCode, isHost }: SessionProps) {
 			receiverRef.current.abort(msg.transferId);
 		} else if (msg.type === 'draw') {
 			whiteboardRef.current?.drawStroke(msg);
+			markWhiteboardDirty();
 		} else if (msg.type === 'draw-text') {
 			whiteboardRef.current?.drawText({ ...msg, kind: 'text', id: msg.id, font: msg.font as TextFont });
+			markWhiteboardDirty();
 		} else if (msg.type === 'text-edit') {
 			whiteboardRef.current?.editText(msg.id, msg.text);
+			markWhiteboardDirty();
 		} else if (msg.type === 'draw-clear') {
 			whiteboardRef.current?.clearCanvas();
+			markWhiteboardDirty();
 		}
-	}, [forgetPanel, startPulse, noteRemoteZ]);
+	}, [applyRoomSnapshot, forgetPanel, isHost, markWhiteboardDirty, startPulse, noteRemoteZ]);
 
 	// We use useYouTubeSync here to route panel-update and whiteboard messages.
 	// YoutubeWidget mounts its own useYouTubeSync instance for YT playback messages.
@@ -539,22 +686,25 @@ export function Session({ roomCode, isHost }: SessionProps) {
 	const handleWbStroke = useCallback(
 		(stroke: WhiteboardStroke) => {
 			sendSync({ type: 'draw', ...stroke });
+			markWhiteboardDirty();
 		},
-		[sendSync]
+		[markWhiteboardDirty, sendSync]
 	);
 
 	const handleWbText = useCallback(
 		(item: WhiteboardText) => {
 			sendSync({ type: 'draw-text', id: item.id, x: item.x, y: item.y, text: item.text, color: item.color, size: item.size, font: item.font });
+			markWhiteboardDirty();
 		},
-		[sendSync]
+		[markWhiteboardDirty, sendSync]
 	);
 
 	const handleWbTextEdit = useCallback(
 		(id: string, text: string) => {
 			sendSync({ type: 'text-edit', id, text });
+			markWhiteboardDirty();
 		},
-		[sendSync]
+		[markWhiteboardDirty, sendSync]
 	);
 
 	// A dragged-out area becomes a tag with bounds, so it can frame what it
@@ -627,10 +777,32 @@ export function Session({ roomCode, isHost }: SessionProps) {
 		[sendSync]
 	);
 
+	useEffect(() => {
+		sendRoomStateRef.current = () => {
+			if (!mediaHydratedRef.current) {
+				pendingRoomRequestRef.current = true;
+				void mediaHydrationPromiseRef.current;
+				return;
+			}
+			const snapshot = latestSnapshotRef.current;
+			if (!snapshot) return;
+			sendSync({ type: 'room-state-snapshot', snapshot });
+			dynamicPanels.forEach(panel => {
+				if (panel.initialFile) sendFileTo(panel.id, panel.initialFile);
+				panel.recordings?.forEach(recording => sendFileTo(panel.id, recording.file, recording.id));
+			});
+		};
+	}, [dynamicPanels, sendFileTo, sendSync]);
+
+	useEffect(() => {
+		if (!isHost && status === 'connected') sendSync({ type: 'room-state-request' });
+	}, [isHost, sendSync, status]);
+
 	const handleWbClear = useCallback(() => {
 		whiteboardRef.current?.clearCanvas();
 		sendSync({ type: 'draw-clear' });
-	}, [sendSync]);
+		markWhiteboardDirty();
+	}, [markWhiteboardDirty, sendSync]);
 
 	const bringToFront = useCallback(
 		(id: PanelId) => {
@@ -1025,6 +1197,12 @@ export function Session({ roomCode, isHost }: SessionProps) {
 			delete codeSendTimersRef.current[id];
 		}, 250);
 	};
+	const updatePanelPlayback = useCallback((id: string, playback: NonNullable<DynamicPanel['playback']>) => {
+		setDynamicPanels(prev => prev.map(panel => panel.id === id ? { ...panel, playback } : panel));
+	}, []);
+	const updateDynamicPanel = useCallback((id: string, patch: Partial<DynamicPanel>) => {
+		setDynamicPanels(prev => prev.map(panel => panel.id === id ? { ...panel, ...patch } : panel));
+	}, []);
 
 	useEffect(() => {
 		let stream: MediaStream | undefined;
@@ -1774,6 +1952,9 @@ export function Session({ roomCode, isHost }: SessionProps) {
 								id={panel.id}
 								dataConnection={dataConnection}
 								initialVideoId={panel.initialVideoId}
+								initialPlayback={panel.playback}
+								onPlaybackChange={playback => updatePanelPlayback(panel.id, playback)}
+								onVideoChange={videoId => updateDynamicPanel(panel.id, { initialVideoId: videoId })}
 								onClose={() => removePanel(panel.id)}
 								spatialVolume={spatialVolumeForPanel(panel.state)}
 								docked={dockedIds.includes(panel.id)}
@@ -1785,7 +1966,12 @@ export function Session({ roomCode, isHost }: SessionProps) {
 								id={panel.id}
 								dataConnection={dataConnection}
 								recordings={panel.recordings}
-								onRecordingComplete={recording => sendFileTo(panel.id, recording.file, recording.id)}
+								initialPlayback={panel.playback}
+								onPlaybackChange={playback => updatePanelPlayback(panel.id, playback)}
+								onRecordingComplete={recording => {
+									updateDynamicPanel(panel.id, { recordings: [...(panel.recordings ?? []), recording] });
+									sendFileTo(panel.id, recording.file, recording.id);
+								}}
 								onStatusChange={status => setRecorderStatuses(prev => ({ ...prev, [panel.id]: status }))}
 								transferProgress={transferProgress[panel.id]}
 								onClose={() => removePanel(panel.id)}
@@ -1797,13 +1983,18 @@ export function Session({ roomCode, isHost }: SessionProps) {
 								id={panel.id}
 								dataConnection={dataConnection}
 								initialFile={panel.initialFile}
+								initialPlayback={panel.playback}
+								onPlaybackChange={playback => updatePanelPlayback(panel.id, playback)}
 								onClose={() => removePanel(panel.id)}
 								spatialVolume={spatialVolumeForPanel(panel.state)}
 								docked={dockedIds.includes(panel.id)}
 								onToggleDock={() => toggleDock(panel.id)}
 								onTrackChange={name => setPanelLabels(prev => ({ ...prev, [panel.id]: name }))}
 								transferProgress={transferProgress[panel.id]}
-								onFileChosen={file => sendFileTo(panel.id, file)}
+								onFileChosen={file => {
+									updateDynamicPanel(panel.id, { initialFile: file });
+									sendFileTo(panel.id, file);
+								}}
 							/>
 						) : (
 							<BrowserWidget
@@ -1814,6 +2005,7 @@ export function Session({ roomCode, isHost }: SessionProps) {
 								docked={dockedIds.includes(panel.id)}
 								onToggleDock={() => toggleDock(panel.id)}
 								onTitleChange={title => setPanelLabels(prev => ({ ...prev, [panel.id]: title }))}
+								onUrlChange={url => updateDynamicPanel(panel.id, { initialUrl: url })}
 							/>
 						)}
 					</DraggablePanel>

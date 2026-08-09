@@ -79,6 +79,8 @@ export interface WhiteboardHandle {
   drawText(item: WhiteboardText): void;
   editText(id: string, text: string): void;
   clearCanvas(): void;
+  getItems(): CanvasItem[];
+  replaceItems(items: CanvasItem[]): void;
 }
 
 interface WhiteboardProps {
@@ -399,6 +401,13 @@ const Whiteboard = forwardRef<WhiteboardHandle, WhiteboardProps>(
           if (!canvas) return;
           const ctx = canvas.getContext("2d");
           if (ctx) ctx.clearRect(0, 0, canvas.width, canvas.height);
+        },
+        getItems() {
+          return strokesRef.current.map(item => ({ ...item }));
+        },
+        replaceItems(items) {
+          strokesRef.current = items.map(item => ({ ...item }));
+          redrawAll();
         },
       }),
       [drawSegment, drawTextItem, redrawAll],

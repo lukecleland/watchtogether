@@ -15,6 +15,13 @@ export interface RecordingClip {
   file: File;
 }
 
+export interface PanelPlayback {
+  recordingId?: string;
+  time: number;
+  playing: boolean;
+  volume?: number;
+}
+
 /** Which face a sticky note is currently showing. */
 export type NoteKind = "text" | "chord" | "tab";
 
@@ -100,5 +107,6 @@ export interface DynamicPanel {
   code?: CodeContent;
   /** Completed screen recordings retained for this session only. */
   recordings?: RecordingClip[];
+  playback?: PanelPlayback;
   initialUrl?: string;
 }

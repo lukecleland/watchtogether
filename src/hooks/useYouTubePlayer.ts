@@ -97,6 +97,7 @@ export function useYouTubePlayer(
 ) {
   const playerRef = useRef<YTPlayer | null>(null);
   const pendingVideoRef = useRef<string | null>(null);
+  const pendingPlaybackRef = useRef<{ videoId: string; time: number; playing: boolean } | null>(null);
   // Always read the latest callback without re-creating the player
   const onStateChangeRef = useRef(options.onStateChange);
   onStateChangeRef.current = options.onStateChange;
@@ -136,6 +137,14 @@ export function useYouTubePlayer(
             if (pendingVideoRef.current) {
               target.loadVideoById(pendingVideoRef.current);
               pendingVideoRef.current = null;
+            }
+            if (pendingPlaybackRef.current) {
+              const pending = pendingPlaybackRef.current;
+              target.loadVideoById(pending.videoId);
+              target.seekTo(pending.time, true);
+              if (pending.playing) target.playVideo();
+              else target.pauseVideo();
+              pendingPlaybackRef.current = null;
             }
           },
           onStateChange: ({ data, target }) => {
@@ -185,6 +194,21 @@ export function useYouTubePlayer(
     );
   }, []);
 
+  const restorePlayback = useCallback((videoId: string, time: number, playing: boolean) => {
+    const player = playerRef.current;
+    if (!player) {
+      pendingVideoRef.current = null;
+      pendingPlaybackRef.current = { videoId, time, playing };
+      return;
+    }
+    player.loadVideoById(videoId);
+    player.seekTo(time, true);
+    if (playing) player.playVideo();
+    else player.pauseVideo();
+  }, []);
+
+  const getCurrentTime = useCallback(() => playerRef.current?.getCurrentTime() ?? 0, []);
+
   /** Title of the loaded video, or null until the player has the metadata. */
   const getTitle = useCallback((): string | null => {
     try {
@@ -195,5 +219,5 @@ export function useYouTubePlayer(
     }
   }, []);
 
-  return { loadVideo, playVideo, pauseVideo, seekTo, setVolume, getTitle };
+  return { loadVideo, playVideo, pauseVideo, seekTo, setVolume, restorePlayback, getCurrentTime, getTitle };
 }
