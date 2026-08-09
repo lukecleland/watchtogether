@@ -2,11 +2,17 @@
 export type PanelId = "local" | "remote";
 
 /** The type of a dynamically-spawned panel. */
-export type DynamicPanelType = "youtube" | "audio" | "browser" | "note" | "code";
+export type DynamicPanelType = "youtube" | "audio" | "browser" | "note" | "code" | "recorder";
 
 export interface CodeContent {
   text: string;
   language: string;
+}
+
+export interface RecordingClip {
+  id: string;
+  name: string;
+  file: File;
 }
 
 /** Which face a sticky note is currently showing. */
@@ -92,5 +98,7 @@ export interface DynamicPanel {
   note?: NoteContent;
   /** Live contents for a code panel. */
   code?: CodeContent;
+  /** Completed screen recordings retained for this session only. */
+  recordings?: RecordingClip[];
   initialUrl?: string;
 }

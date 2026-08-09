@@ -85,6 +85,11 @@ export type SyncMessage =
 	| { type: 'note-update'; id: string; note: NoteContent }
 	| { type: 'spawn-code'; id: string; state: PanelState; code: CodeContent }
 	| { type: 'code-update'; id: string; code: CodeContent }
+	| { type: 'spawn-recorder'; id: string; state: PanelState }
+	| { type: 'recording-select'; id: string; recordingId: string }
+	| { type: 'recording-play'; id: string; recordingId: string; time: number; at?: number }
+	| { type: 'recording-pause'; id: string; recordingId: string; time: number; at?: number }
+	| { type: 'recording-seek'; id: string; recordingId: string; time: number; at?: number; playing?: boolean }
 	/** A canvas bookmark. ALL of x/y/w/h are world-normalised — world pixels
 	 *  divided by the sender's viewport — and the receiver multiplies by its
 	 *  own. Raw world pixels here once sent a peer's viewport off the canvas. */
@@ -110,6 +115,7 @@ export type SyncMessage =
 			mimeType: string;
 			size: number;
 			chunks: number;
+			recordingId?: string;
 	  }
 	/** One slice of a file, base64, placed by index rather than appended. */
 	| { type: 'file-chunk'; transferId: string; index: number; data: string }

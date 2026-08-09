@@ -35,6 +35,7 @@ import { AudioPlayer } from '../components/AudioPlayer';
 import { StickyNote } from '../components/StickyNote';
 import { BrowserWidget } from '../components/BrowserWidget';
 import { CodeWidget } from '../components/CodeWidget';
+import { ScreenRecorderWidget, type RecordingStatus } from '../components/ScreenRecorderWidget';
 import { DraggablePanel } from '../components/DraggablePanel';
 import { Whiteboard, type WhiteboardHandle, type WhiteboardStroke, type WhiteboardText } from '../components/Whiteboard';
 import type { Nib, TextFont } from '../utils/brush';
@@ -176,6 +177,7 @@ export function Session({ roomCode, isHost }: SessionProps) {
 	// The "nobody here yet" nudge. Dismissing it is final for the session —
 	// being told twice how to invite someone is worse than not being told.
 	const [summonPromptDismissed, setSummonPromptDismissed] = useState(false);
+	const [recorderStatuses, setRecorderStatuses] = useState<Record<string, RecordingStatus>>({});
 	const [widgetMenuOpen, setWidgetMenuOpen] = useState(false);
 	const widgetMenuRef = useRef<HTMLDivElement>(null);
 
@@ -429,6 +431,8 @@ export function Session({ roomCode, isHost }: SessionProps) {
 			setDynamicPanels(prev => [...prev, { id: msg.id, type: 'code', state: denormalisePanel(msg.state), code: msg.code }]);
 		} else if (msg.type === 'code-update') {
 			setDynamicPanels(prev => prev.map(p => (p.id === msg.id ? { ...p, code: msg.code } : p)));
+		} else if (msg.type === 'spawn-recorder') {
+			setDynamicPanels(prev => [...prev, { id: msg.id, type: 'recorder', state: denormalisePanel(msg.state), recordings: [] }]);
 		} else if (msg.type === 'remove-panel') {
 			setDynamicPanels(prev => prev.filter(p => p.id !== msg.id));
 			// The panel is gone, so any local dock chip pointing at it must go too
@@ -485,9 +489,14 @@ export function Session({ roomCode, isHost }: SessionProps) {
 			const done = receiverRef.current.accept(msg.transferId, msg.index, msg.data);
 			if (done) {
 				delete transferPanelRef.current[msg.transferId];
-				setDynamicPanels(prev =>
-					prev.map(p => (p.id === done.meta.panelId ? { ...p, initialFile: done.file } : p))
-				);
+				setDynamicPanels(prev => prev.map(p => {
+					if (p.id !== done.meta.panelId) return p;
+					if (done.meta.recordingId) {
+						if (p.recordings?.some(recording => recording.id === done.meta.recordingId)) return p;
+						return { ...p, recordings: [...(p.recordings ?? []), { id: done.meta.recordingId, name: done.file.name, file: done.file }] };
+					}
+					return { ...p, initialFile: done.file };
+				}));
 				setTransferProgress(prev => {
 					const next = { ...prev };
 					delete next[done.meta.panelId];
@@ -584,7 +593,7 @@ export function Session({ roomCode, isHost }: SessionProps) {
 
 	// Stream a file to the peer for an already-spawned panel
 	const sendFileTo = useCallback(
-		(panelId: string, file: File) => {
+		(panelId: string, file: File, recordingId?: string) => {
 			const transferId = crypto.randomUUID();
 			transferPanelRef.current[transferId] = panelId;
 			sendSync({
@@ -594,7 +603,8 @@ export function Session({ roomCode, isHost }: SessionProps) {
 				fileName: file.name,
 				mimeType: file.type,
 				size: file.size,
-				chunks: chunkCount(file.size)
+				chunks: chunkCount(file.size),
+				...(recordingId ? { recordingId } : {})
 			});
 			setTransferProgress(prev => ({ ...prev, [panelId]: 0 }));
 			void sendFileInChunks(
@@ -658,6 +668,12 @@ export function Session({ roomCode, isHost }: SessionProps) {
 
 	const removePanel = (id: string) => {
 		setDynamicPanels(prev => prev.filter(p => p.id !== id));
+		setRecorderStatuses(prev => {
+			if (!(id in prev)) return prev;
+			const next = { ...prev };
+			delete next[id];
+			return next;
+		});
 		forgetPanel(id);
 		sendSync({ type: 'remove-panel', id });
 	};
@@ -733,6 +749,7 @@ export function Session({ roomCode, isHost }: SessionProps) {
 			note: 420,
 			browser: 760,
 			code: 640,
+			recorder: 720,
 			position: 0
 		};
 
@@ -811,7 +828,7 @@ export function Session({ roomCode, isHost }: SessionProps) {
 			const firstLine = text.split('\n')[0].trim();
 			if (kind === 'text' && firstLine) return firstLine.slice(0, 40);
 		}
-		const base = panel.type === 'youtube' ? 'YouTube' : panel.type === 'note' ? 'Note' : panel.type === 'browser' ? 'Browser' : panel.type === 'code' ? 'Code' : 'Audio';
+		const base = panel.type === 'youtube' ? 'YouTube' : panel.type === 'note' ? 'Note' : panel.type === 'browser' ? 'Browser' : panel.type === 'code' ? 'Code' : panel.type === 'recorder' ? 'Recorder' : 'Audio';
 		const sameType = dynamicPanels.filter(p => p.type === panel.type);
 		if (sameType.length < 2) return base;
 		return `${base} ${sameType.findIndex(p => p.id === panel.id) + 1}`;
@@ -949,15 +966,15 @@ export function Session({ roomCode, isHost }: SessionProps) {
 	// Spawn a new dynamic panel at the given screen position (screen coords → world coords).
 	// Pass fromRemote=true when applying a remote-initiated spawn (skips sync to avoid loops).
 	const spawnPanel = (
-		type: 'youtube' | 'audio' | 'browser' | 'note' | 'code',
+		type: 'youtube' | 'audio' | 'browser' | 'note' | 'code' | 'recorder',
 		screenX: number,
 		screenY: number,
 		extra?: { initialVideoId?: string; initialFile?: File; initialUrl?: string; note?: NoteContent; code?: CodeContent },
 		remoteId?: string
 	) => {
 		const { x: tx, y: ty, scale } = canvasStateRef.current;
-		const w = type === 'browser' ? 560 : type === 'code' ? 520 : type === 'youtube' ? 320 : type === 'note' ? 300 : 300;
-		const h = type === 'browser' ? 420 : type === 'code' ? 380 : type === 'youtube' ? 260 : type === 'note' ? 300 : 360;
+		const w = type === 'browser' ? 560 : type === 'recorder' ? 600 : type === 'code' ? 520 : type === 'youtube' ? 320 : type === 'note' ? 300 : 300;
+		const h = type === 'browser' ? 420 : type === 'recorder' ? 480 : type === 'code' ? 380 : type === 'youtube' ? 260 : type === 'note' ? 300 : 360;
 		const worldX = (screenX - tx) / scale - w / 2;
 		const worldY = (screenY - ty) / scale - h / 2;
 		const nextZ = ++topZRef.current;
@@ -980,6 +997,8 @@ export function Session({ roomCode, isHost }: SessionProps) {
 				sendSync({ type: 'spawn-note', id, state: normalisePanel(state), note: extra?.note ?? defaultNoteContent() });
 			} else if (type === 'code') {
 				sendSync({ type: 'spawn-code', id, state: normalisePanel(state), code: extra?.code ?? { text: '', language: 'text' } });
+			} else if (type === 'recorder') {
+				sendSync({ type: 'spawn-recorder', id, state: normalisePanel(state) });
 			}
 		}
 	};
@@ -1309,6 +1328,9 @@ export function Session({ roomCode, isHost }: SessionProps) {
 		connected: `Connected · ${participantCount}/4`,
 		error: ''
 	};
+	const recorderStatusList = Object.values(recorderStatuses);
+	const anyRecorderActive = recorderStatusList.some(item => item.recording);
+	const recorderErrors = [...new Set(recorderStatusList.flatMap(item => item.errors))];
 
 	return (
 		<div
@@ -1427,6 +1449,13 @@ export function Session({ roomCode, isHost }: SessionProps) {
 						title="Add a code editor">
 						<span className="font-mono text-emerald-400">&lt;/&gt;</span>
 						<span className="hidden sm:inline">Code</span>
+					</button>
+					<button
+						onClick={() => spawnPanel('recorder', window.innerWidth / 2, window.innerHeight / 2)}
+						className="flex items-center gap-1 sm:gap-1.5 bg-zinc-800 hover:bg-zinc-700 active:bg-zinc-600 border border-zinc-700 text-zinc-300 text-xs font-medium px-2 sm:px-3 py-1.5 rounded-lg transition-colors"
+						title="Add a screen recorder">
+						<span className="h-3.5 w-3.5 rounded-full border-2 border-red-300 bg-red-500" />
+						<span className="hidden sm:inline">Record</span>
 					</button>
 					<button
 						onClick={() => spawnPanel('youtube', window.innerWidth / 2, window.innerHeight / 2)}
@@ -1571,6 +1600,19 @@ export function Session({ roomCode, isHost }: SessionProps) {
 					{mediaError}
 				</div>
 			)}
+			{(anyRecorderActive || recorderErrors.length > 0) && (
+				<div className="absolute right-3 z-[1001] flex items-center gap-2 rounded-xl border border-zinc-700 bg-zinc-900/95 px-2.5 py-2 shadow-xl backdrop-blur" style={{ top: 'calc(3rem + env(safe-area-inset-top) + 0.5rem)' }}>
+					{anyRecorderActive && <span className="flex items-center gap-1.5 text-xs font-semibold text-red-300"><span className="h-2.5 w-2.5 animate-pulse rounded-full bg-red-500" />Recording</span>}
+					{recorderErrors.length > 0 && (
+						<div className="group/recording-info relative">
+							<span tabIndex={0} aria-label="Recording warnings" className="flex h-5 w-5 cursor-help items-center justify-center rounded-full bg-red-600 text-[11px] font-bold text-white">i</span>
+							<div role="tooltip" className="pointer-events-none absolute right-0 top-full mt-2 hidden w-72 rounded-xl border border-red-800 bg-red-950/95 p-3 text-xs text-red-200 shadow-2xl group-hover/recording-info:block group-focus-within/recording-info:block">
+								{recorderErrors.map(message => <p key={message} className="not-last:mb-2">{message}</p>)}
+							</div>
+						</div>
+					)}
+				</div>
+			)}
 
 			{/* Whiteboard canvas — sits below all panels, transparent so grid shows through */}
 			<Whiteboard
@@ -1707,7 +1749,7 @@ export function Session({ roomCode, isHost }: SessionProps) {
 						state={panel.state}
 						{...makeDynamicPanelHandlers(panel.id)}
 						onToggleDock={() => toggleDock(panel.id)}
-						minWidth={panel.type === 'browser' ? 360 : panel.type === 'code' ? 380 : panel.type === 'youtube' ? 280 : 260}
+						minWidth={panel.type === 'browser' ? 360 : panel.type === 'recorder' ? 420 : panel.type === 'code' ? 380 : panel.type === 'youtube' ? 280 : 260}
 						minHeight={panel.type === 'browser' ? 240 : panel.type === 'audio' ? 300 : 60}
 						scale={canvas.scale}>
 						{zoomTagHandle(panel.id, panelLabels[panel.id] ?? fallbackLabel(panel))}
@@ -1737,6 +1779,18 @@ export function Session({ roomCode, isHost }: SessionProps) {
 								docked={dockedIds.includes(panel.id)}
 								onToggleDock={() => toggleDock(panel.id)}
 								onTitleChange={title => setPanelLabels(prev => ({ ...prev, [panel.id]: title }))}
+							/>
+						) : panel.type === 'recorder' ? (
+							<ScreenRecorderWidget
+								id={panel.id}
+								dataConnection={dataConnection}
+								recordings={panel.recordings}
+								onRecordingComplete={recording => sendFileTo(panel.id, recording.file, recording.id)}
+								onStatusChange={status => setRecorderStatuses(prev => ({ ...prev, [panel.id]: status }))}
+								transferProgress={transferProgress[panel.id]}
+								onClose={() => removePanel(panel.id)}
+								docked={dockedIds.includes(panel.id)}
+								onToggleDock={() => toggleDock(panel.id)}
 							/>
 						) : panel.type === 'audio' ? (
 							<AudioPlayer

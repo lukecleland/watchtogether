@@ -62,6 +62,8 @@ export interface TransferMeta {
   mimeType: string;
   size: number;
   chunks: number;
+  /** Present when this transfer is a clip in a recorder panel. */
+  recordingId?: string;
 }
 
 interface Incoming {
