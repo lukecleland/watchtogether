@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useEffectEvent } from 'react';
 import type { RoomDataConnection } from './usePeer';
-import type { NoteContent, PanelState } from '../types/panels';
+import type { CodeContent, NoteContent, PanelState } from '../types/panels';
 
 /**
  * useYouTubeSync — binds a message handler to a PeerJS DataConnection and
@@ -83,6 +83,8 @@ export type SyncMessage =
 	/** Note contents changed. Sent whole rather than as a diff: a note is small,
 	 *  and last-write-wins is the right outcome for two people editing one. */
 	| { type: 'note-update'; id: string; note: NoteContent }
+	| { type: 'spawn-code'; id: string; state: PanelState; code: CodeContent }
+	| { type: 'code-update'; id: string; code: CodeContent }
 	/** A canvas bookmark. ALL of x/y/w/h are world-normalised — world pixels
 	 *  divided by the sender's viewport — and the receiver multiplies by its
 	 *  own. Raw world pixels here once sent a peer's viewport off the canvas. */

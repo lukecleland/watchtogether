@@ -2,6 +2,8 @@ import { useEffect, useRef, useState } from "react";
 import { DockButton } from "./Dock";
 import { chordsOf, emptyChord } from "../types/panels";
 import type { ChordShape, NoteContent, NoteKind } from "../types/panels";
+import { codeFromText } from "../utils/code";
+import { CodeWidget } from "./CodeWidget";
 
 /**
  * StickyNote — a note panel with three faces: plain text, a chord diagram, or
@@ -205,7 +207,18 @@ export function StickyNote({ note, onChange, onClose, docked = false, onToggleDo
   }, [note.text]);
 
   return (
-    <div className={`flex flex-col h-full ${c.bg} rounded-xl overflow-hidden shadow-xl border border-black/10`}>
+    <div
+      data-note-widget
+      onPaste={e => {
+        // Pasting inside an embedded code editor should remain a normal edit.
+        if ((e.target as Element).closest('[data-code-widget]')) return;
+        const code = codeFromText(e.clipboardData.getData("text/plain"));
+        if (!code) return;
+        e.preventDefault();
+        set({ codeBlocks: [...(note.codeBlocks ?? []), code] });
+      }}
+      className={`flex flex-col h-full ${c.bg} rounded-xl overflow-hidden shadow-xl border border-black/10`}
+    >
       <div className={`drag-handle flex items-center justify-between px-2 py-1.5 ${c.head} cursor-grab active:cursor-grabbing select-none shrink-0`}>
         <div className="no-drag flex items-center gap-0.5">
           {(["text", "chord", "tab"] as NoteKind[]).map(k => (
@@ -267,6 +280,7 @@ export function StickyNote({ note, onChange, onClose, docked = false, onToggleDo
 
       <div className={`no-drag flex-1 min-h-0 overflow-auto p-2 ${c.text}`}>
         {note.kind === "text" && (
+          <div className="flex h-full flex-col gap-2">
           <textarea
             ref={textRef}
             defaultValue={note.text}
@@ -276,8 +290,14 @@ export function StickyNote({ note, onChange, onClose, docked = false, onToggleDo
             }}
             placeholder="Write something…"
             spellCheck={false}
-            className="w-full h-full bg-transparent resize-none outline-none text-sm leading-snug placeholder:opacity-40"
+            className="w-full min-h-24 flex-1 bg-transparent resize-none outline-none text-sm leading-snug placeholder:opacity-40"
           />
+          {(note.codeBlocks ?? []).map((code, index) => (
+            <div key={index} className="h-40 shrink-0">
+              <CodeWidget embedded code={code} onChange={next => set({ codeBlocks: (note.codeBlocks ?? []).map((item, i) => i === index ? next : item) })} onClose={() => set({ codeBlocks: (note.codeBlocks ?? []).filter((_, i) => i !== index) })} />
+            </div>
+          ))}
+          </div>
         )}
 
         {note.kind === "chord" && (
