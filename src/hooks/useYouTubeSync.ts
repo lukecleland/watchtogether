@@ -109,6 +109,9 @@ export type SyncMessage =
 	 *  and re-adds it if they had dismissed it — a ping is an explicit nudge,
 	 *  so silently doing nothing would be worse than the small intrusion. */
 	| { type: 'dock-ping'; id: string }
+	| { type: 'view-request'; id: string }
+	| { type: 'view-response'; id: string; canvas: { x: number; y: number; scale: number } }
+	| { type: 'view-suggestion'; id: string; canvas: { x: number; y: number; scale: number } }
 	/** Announces a chunked file transfer and the panel it belongs to. */
 	| {
 			type: 'file-begin';
