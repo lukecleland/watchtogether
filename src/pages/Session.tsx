@@ -134,8 +134,16 @@ export function Session({ roomCode, isHost }: SessionProps) {
 	const [microphoneEnabled, setMicrophoneEnabled] = useState(true);
 	const [cameraEnabled, setCameraEnabled] = useState(true);
 	const [mediaError, setMediaError] = useState<string | null>(null);
-	const [fixedPanels, setFixedPanels] = useState<Record<PanelId, PanelState>>(() => savedRoom?.fixedPanels ?? defaultFixedPanels());
-	const [remotePanelStates, setRemotePanelStates] = useState<Record<string, PanelState>>({});
+	const [fixedPanels, setFixedPanels] = useState<Record<PanelId, PanelState>>(() => {
+		if (!savedRoom) return defaultFixedPanels();
+		// Snapshots written before per-peer participant persistence used `remote`
+		// as a cross-client fallback, and that value may contain viewport-scaled
+		// corruption. Preserve the user's own panel but reset that unsafe fallback.
+		return savedRoom.remotePanels
+			? savedRoom.fixedPanels
+			: { local: savedRoom.fixedPanels.local, remote: defaultFixedPanels().remote };
+	});
+	const [remotePanelStates, setRemotePanelStates] = useState<Record<string, PanelState>>(() => savedRoom?.remotePanels ?? {});
 	const [dynamicPanels, setDynamicPanels] = useState<DynamicPanel[]>(() => savedRoom?.panels.map(panel => ({
 		id: panel.id,
 		type: panel.type,
@@ -151,7 +159,7 @@ export function Session({ roomCode, isHost }: SessionProps) {
 	const positionTagsRef = useRef<PositionTag[]>([]);
 	positionTagsRef.current = positionTags;
 	// Tracks the highest z-index currently in use so we can raise panels on click
-	const topZRef = useRef(Math.max(20, ...(savedRoom?.panels.map(panel => panel.state.z) ?? []), ...(savedRoom ? Object.values(savedRoom.fixedPanels).map(panel => panel.z) : [])));
+	const topZRef = useRef(Math.max(20, ...(savedRoom?.panels.map(panel => panel.state.z) ?? []), ...(savedRoom ? Object.values(savedRoom.fixedPanels).map(panel => panel.z) : []), ...(savedRoom?.remotePanels ? Object.values(savedRoom.remotePanels).map(panel => panel.z) : [])));
 	// Background drag-over indicator
 	const [bgDragOver, setBgDragOver] = useState(false);
 	// The "nobody here yet" nudge. Dismissing it is final for the session —
@@ -297,6 +305,7 @@ export function Session({ roomCode, isHost }: SessionProps) {
 			savedAt: Date.now(),
 			viewport: { width: window.innerWidth, height: window.innerHeight },
 			fixedPanels,
+			remotePanels: remotePanelStates,
 			panels: dynamicPanels.map(panel => ({
 				id: panel.id,
 				type: panel.type,
@@ -332,7 +341,7 @@ export function Session({ roomCode, isHost }: SessionProps) {
 			});
 		});
 		return () => clearTimeout(saveTimer);
-	}, [canvas, customLabels, dockedIds, dynamicPanels, fixedPanels, panelLabels, positionTags, roomCode, savedRoom?.drawings, savedRoom?.panels, whiteboardRevision]);
+	}, [canvas, customLabels, dockedIds, dynamicPanels, fixedPanels, panelLabels, positionTags, remotePanelStates, roomCode, savedRoom?.drawings, savedRoom?.panels, whiteboardRevision]);
 
 	const { remoteStreams, dataConnection, participantCount, status, error, replaceVideoTrack } = usePeer({
 		roomCode,
@@ -431,7 +440,8 @@ export function Session({ roomCode, isHost }: SessionProps) {
 
 	const applyRoomSnapshot = useCallback((snapshot: RoomSnapshot) => {
 		ignoreLocalHydrationRef.current = true;
-		setFixedPanels({ local: { ...snapshot.fixedPanels.remote }, remote: { ...snapshot.fixedPanels.local } });
+		// Participant panels are perspective-specific. Keep this client's locally
+		// persisted self/peer geometry; live panel announcements repopulate peers.
 		setDynamicPanels(snapshot.panels.map(panel => ({
 			id: panel.id,
 			type: panel.type,
@@ -449,9 +459,10 @@ export function Session({ roomCode, isHost }: SessionProps) {
 		setCustomLabels(Object.fromEntries(Object.entries(snapshot.customLabels).map(([id, label]) => [swapFixedId(id), label])));
 		setCanvas({ ...snapshot.canvas });
 		whiteboardRef.current?.replaceItems(snapshot.drawings);
-		latestSnapshotRef.current = snapshot;
-		saveRoomSnapshot(roomCode, snapshot);
-	}, [roomCode]);
+		// The normal persistence effect writes the merged local perspective. Do
+		// not store the host snapshot verbatim or it will replace this client's
+		// participant geometry on the next refresh.
+	}, []);
 
 	// Panel sync — wired to the same data channel as YouTube sync
 	const handleRemoteSync = useCallback((msg: SyncMessage) => {
@@ -495,8 +506,9 @@ export function Session({ roomCode, isHost }: SessionProps) {
 					[remotePeerId]: denormalisePanel(msg.state)
 				}));
 			} else if (msg.id === 'local' || msg.id === 'remote') {
-				// Swap local ↔ remote so each user's "You" drives the other's "Guest"
-				const targetId: PanelId = msg.id === 'local' ? 'remote' : 'local';
+				// usePeer has already translated a targeted remote-peer id to local.
+				// Swapping again corrupts the fallback dimensions used after refresh.
+				const targetId: PanelId = msg.id;
 				setFixedPanels(prev => ({
 					...prev,
 					[targetId]: denormalisePanel(msg.state)
@@ -784,6 +796,10 @@ export function Session({ roomCode, isHost }: SessionProps) {
 	useEffect(() => {
 		if (!isHost && status === 'connected') sendSync({ type: 'room-state-request' });
 	}, [isHost, sendSync, status]);
+
+	useEffect(() => {
+		if (status === 'connected') sendPanelUpdate('local', fixedPanels.local);
+	}, [fixedPanels.local, sendPanelUpdate, status]);
 
 	const handleWbClear = useCallback(() => {
 		whiteboardRef.current?.clearCanvas();
