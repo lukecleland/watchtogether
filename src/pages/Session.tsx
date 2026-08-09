@@ -144,6 +144,7 @@ export function Session({ roomCode, isHost }: SessionProps) {
 			: { local: savedRoom.fixedPanels.local, remote: defaultFixedPanels().remote };
 	});
 	const [remotePanelStates, setRemotePanelStates] = useState<Record<string, PanelState>>(() => savedRoom?.remotePanels ?? {});
+	const knownRemoteGeometryRef = useRef(new Set(Object.keys(savedRoom?.remotePanels ?? {})));
 	const [dynamicPanels, setDynamicPanels] = useState<DynamicPanel[]>(() => savedRoom?.panels.map(panel => ({
 		id: panel.id,
 		type: panel.type,
@@ -352,7 +353,9 @@ export function Session({ roomCode, isHost }: SessionProps) {
 
 	useEffect(() => {
 		setRemotePanelStates(prev => {
-			const next: Record<string, PanelState> = {};
+			// Retain disconnected peers so a transient reconnect with the same id
+			// cannot discard its persisted size before the stream returns.
+			const next: Record<string, PanelState> = { ...prev };
 			remoteStreams.forEach(({ peerId }, index) => {
 				next[peerId] =
 					prev[peerId] ?? {
@@ -498,9 +501,16 @@ export function Session({ roomCode, isHost }: SessionProps) {
 			setDockedIds(prev => (prev.includes(msg.id) ? prev : [...prev, msg.id]));
 		}
 
-		if (msg.type === 'panel-update') {
+		if (msg.type === 'panel-announce') {
+			const remotePeerId = peerIdFromPanelId(msg.id);
+			if (remotePeerId && !knownRemoteGeometryRef.current.has(remotePeerId)) {
+				knownRemoteGeometryRef.current.add(remotePeerId);
+				setRemotePanelStates(prev => ({ ...prev, [remotePeerId]: denormalisePanel(msg.state) }));
+			}
+		} else if (msg.type === 'panel-update') {
 			const remotePeerId = peerIdFromPanelId(msg.id);
 			if (remotePeerId) {
+				knownRemoteGeometryRef.current.add(remotePeerId);
 				setRemotePanelStates(prev => ({
 					...prev,
 					[remotePeerId]: denormalisePanel(msg.state)
@@ -798,8 +808,8 @@ export function Session({ roomCode, isHost }: SessionProps) {
 	}, [isHost, sendSync, status]);
 
 	useEffect(() => {
-		if (status === 'connected') sendPanelUpdate('local', fixedPanels.local);
-	}, [fixedPanels.local, sendPanelUpdate, status]);
+		if (status === 'connected') sendSync({ type: 'panel-announce', id: 'local', state: normalisePanel(fixedPanels.local) });
+	}, [fixedPanels.local, sendSync, status]);
 
 	const handleWbClear = useCallback(() => {
 		whiteboardRef.current?.clearCanvas();
