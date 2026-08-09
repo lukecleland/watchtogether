@@ -84,6 +84,7 @@ export function AudioPlayer({
   onFileChosen,
   initialPlayback,
   onPlaybackChange,
+  title = "Record Player",
 }: {
   id: string;
   dataConnection: RoomDataConnection | null;
@@ -106,6 +107,7 @@ export function AudioPlayer({
   onFileChosen?: (file: File) => void;
   initialPlayback?: PanelPlayback;
   onPlaybackChange?: (playback: PanelPlayback) => void;
+  title?: string;
 }) {
   const audioRef = useRef<HTMLAudioElement>(null);
   const objectUrlRef = useRef<string | null>(null);
@@ -375,7 +377,7 @@ export function AudioPlayer({
             <circle cx="12" cy="12" r="2" />
           </svg>
           <span className="text-xs font-semibold text-zinc-300">
-            Record Player
+            {title}
           </span>
         </div>
         <div className="flex items-center gap-1">

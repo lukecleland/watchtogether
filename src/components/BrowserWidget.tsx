@@ -27,6 +27,7 @@ export function BrowserWidget({
   onToggleDock,
   onTitleChange,
   onUrlChange,
+  title = "Mini Browser",
 }: {
   id: string;
   dataConnection: RoomDataConnection | null;
@@ -36,6 +37,7 @@ export function BrowserWidget({
   onToggleDock?: () => void;
   onTitleChange?: (title: string) => void;
   onUrlChange?: (url: string) => void;
+  title?: string;
 }) {
   const [inputValue, setInputValue] = useState(initialUrl ?? "");
   const [url, setUrl] = useState(initialUrl ?? "");
@@ -85,7 +87,7 @@ export function BrowserWidget({
             <path d="M3 9h18M7 6.5h.01M10 6.5h.01" strokeLinecap="round" />
           </svg>
           <span className="text-xs font-semibold text-zinc-300 truncate">
-            Mini Browser
+            {title}
           </span>
         </div>
         <div className="flex items-center gap-1">

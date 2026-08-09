@@ -689,6 +689,9 @@ export function Session({ roomCode, isHost }: SessionProps) {
 		} else if (msg.type === 'text-edit') {
 			whiteboardRef.current?.editText(msg.id, msg.text);
 			markWhiteboardDirty();
+		} else if (msg.type === 'text-move') {
+			whiteboardRef.current?.moveText(msg.id, msg.x, msg.y);
+			markWhiteboardDirty();
 		} else if (msg.type === 'draw-clear') {
 			whiteboardRef.current?.clearCanvas();
 			markWhiteboardDirty();
@@ -729,6 +732,13 @@ export function Session({ roomCode, isHost }: SessionProps) {
 	const handleWbTextEdit = useCallback(
 		(id: string, text: string) => {
 			sendSync({ type: 'text-edit', id, text });
+			markWhiteboardDirty();
+		},
+		[markWhiteboardDirty, sendSync]
+	);
+	const handleWbTextMove = useCallback(
+		(id: string, x: number, y: number) => {
+			sendSync({ type: 'text-move', id, x, y });
 			markWhiteboardDirty();
 		},
 		[markWhiteboardDirty, sendSync]
@@ -1901,6 +1911,7 @@ export function Session({ roomCode, isHost }: SessionProps) {
 				onStroke={handleWbStroke}
 				onText={handleWbText}
 				onTextEdit={handleWbTextEdit}
+				onTextMove={handleWbTextMove}
 				onRegion={handleWbRegion}
 				canvasTransform={canvas}
 			/>
@@ -1981,7 +1992,7 @@ export function Session({ roomCode, isHost }: SessionProps) {
 						{zoomTagHandle('local', 'You')}
 						{/* No onToggleDock: participants are permanently docked, so a
 						    bookmark toggle here would be a button that does nothing */}
-						<VideoPanel stream={localStream} label="You" muted docked={dockedIds.includes('local')} localControls microphoneEnabled={microphoneEnabled} cameraEnabled={cameraEnabled} onToggleMicrophone={toggleMicrophone} onToggleCamera={toggleCamera} />
+						<VideoPanel stream={localStream} label={customLabels.local ?? 'You'} muted docked={dockedIds.includes('local')} localControls microphoneEnabled={microphoneEnabled} cameraEnabled={cameraEnabled} onToggleMicrophone={toggleMicrophone} onToggleCamera={toggleCamera} />
 					</DraggablePanel>
 				)}
 
@@ -2010,7 +2021,7 @@ export function Session({ roomCode, isHost }: SessionProps) {
 							{zoomTagHandle(panelId, label)}
 							<VideoPanel
 								stream={stream}
-								label={label}
+								label={customLabels[panelId] ?? label}
 								docked={dockedIds.includes(panelId)}
 							/>
 						</DraggablePanel>
@@ -2029,6 +2040,7 @@ export function Session({ roomCode, isHost }: SessionProps) {
 						{zoomTagHandle(panel.id, panelLabels[panel.id] ?? fallbackLabel(panel))}
 						{panel.type === 'note' ? (
 							<StickyNote
+								title={customLabels[panel.id] ?? panelLabels[panel.id] ?? fallbackLabel(panel)}
 								note={panel.note ?? defaultNoteContent()}
 								onChange={next => updateNote(panel.id, next)}
 								onClose={() => removePanel(panel.id)}
@@ -2037,6 +2049,7 @@ export function Session({ roomCode, isHost }: SessionProps) {
 							/>
 						) : panel.type === 'code' ? (
 							<CodeWidget
+								title={customLabels[panel.id] ?? panelLabels[panel.id] ?? fallbackLabel(panel)}
 								code={panel.code ?? { text: '', language: 'text' }}
 								onChange={next => updateCode(panel.id, next)}
 								onClose={() => removePanel(panel.id)}
@@ -2045,6 +2058,7 @@ export function Session({ roomCode, isHost }: SessionProps) {
 							/>
 						) : panel.type === 'youtube' ? (
 							<YoutubeWidget
+								title={customLabels[panel.id] ?? panelLabels[panel.id] ?? fallbackLabel(panel)}
 								id={panel.id}
 								dataConnection={dataConnection}
 								initialVideoId={panel.initialVideoId}
@@ -2059,6 +2073,7 @@ export function Session({ roomCode, isHost }: SessionProps) {
 							/>
 						) : panel.type === 'recorder' ? (
 							<ScreenRecorderWidget
+								title={customLabels[panel.id] ?? panelLabels[panel.id] ?? fallbackLabel(panel)}
 								id={panel.id}
 								dataConnection={dataConnection}
 								recordings={panel.recordings}
@@ -2076,6 +2091,7 @@ export function Session({ roomCode, isHost }: SessionProps) {
 							/>
 						) : panel.type === 'audio' ? (
 							<AudioPlayer
+								title={customLabels[panel.id] ?? panelLabels[panel.id] ?? fallbackLabel(panel)}
 								id={panel.id}
 								dataConnection={dataConnection}
 								initialFile={panel.initialFile}
@@ -2094,6 +2110,7 @@ export function Session({ roomCode, isHost }: SessionProps) {
 							/>
 						) : (
 							<BrowserWidget
+								title={customLabels[panel.id] ?? panelLabels[panel.id] ?? fallbackLabel(panel)}
 								id={panel.id}
 								dataConnection={dataConnection}
 								initialUrl={panel.initialUrl}

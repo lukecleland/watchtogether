@@ -18,9 +18,10 @@ interface CodeWidgetProps {
 	docked?: boolean;
 	onToggleDock?: () => void;
 	embedded?: boolean;
+	title?: string;
 }
 
-export function CodeWidget({ code, onChange, onClose, docked = false, onToggleDock, embedded = false }: CodeWidgetProps) {
+export function CodeWidget({ code, onChange, onClose, docked = false, onToggleDock, embedded = false, title = 'Code' }: CodeWidgetProps) {
 	const editorRef = useRef<HTMLTextAreaElement>(null);
 	const highlightRef = useRef<HTMLPreElement>(null);
 	const [isFormatting, setIsFormatting] = useState(false);
@@ -55,9 +56,9 @@ export function CodeWidget({ code, onChange, onClose, docked = false, onToggleDo
 	return (
 		<div data-code-widget className={`flex h-full min-h-0 flex-col overflow-hidden ${embedded ? 'rounded-lg border border-black/20 bg-zinc-950' : 'rounded-xl border border-zinc-700 bg-zinc-950 shadow-xl'}`}>
 			<div className={`${embedded ? 'no-drag' : 'drag-handle cursor-grab active:cursor-grabbing'} flex shrink-0 items-center justify-between bg-zinc-900 px-2 py-1.5 text-zinc-300`}>
-				<select value={code.language} onChange={e => { setFormatError(null); onChange({ ...code, language: e.target.value }); }} className="no-drag rounded bg-zinc-800 px-1.5 py-0.5 text-[11px] outline-none">
+				<div className="flex min-w-0 items-center gap-2"><span className="max-w-28 truncate text-xs font-semibold">{title}</span><select value={code.language} onChange={e => { setFormatError(null); onChange({ ...code, language: e.target.value }); }} className="no-drag rounded bg-zinc-800 px-1.5 py-0.5 text-[11px] outline-none">
 					{['text', 'javascript', 'typescript', 'json', 'html', 'css', 'python', 'sql', 'code'].map(language => <option key={language} value={language}>{language === 'text' ? 'Plain text' : language === 'code' ? 'Generic code' : language[0].toUpperCase() + language.slice(1)}</option>)}
-				</select>
+				</select></div>
 				<div className="flex items-center gap-1">
 					<button disabled={!canFormatLanguage(code.language) || !code.text.trim() || isFormatting} title={canFormatLanguage(code.language) ? `Format as ${code.language}` : 'Choose a specific language to format'} className="no-drag rounded px-1.5 py-0.5 text-[11px] hover:bg-zinc-700 disabled:cursor-not-allowed disabled:opacity-40" onClick={() => void runFormatter()}>{isFormatting ? 'Formatting…' : 'Format'}</button>
 					{onToggleDock && <DockButton docked={docked} onToggle={onToggleDock} />}
