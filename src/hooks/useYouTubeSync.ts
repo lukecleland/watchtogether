@@ -45,6 +45,7 @@ export type SyncMessage =
 	| { type: 'audio-pause'; id: string; time: number; at?: number }
 	| { type: 'audio-seek'; id: string; time: number; at?: number; playing?: boolean }
 	| { type: 'panel-update'; id: string; state: PanelState }
+	| { type: 'panel-announce'; id: string; state: PanelState }
 	| {
 			type: 'draw';
 			x0: number;

@@ -362,6 +362,7 @@ export function usePeer({
       dataConnections.set(connection.peer, connection);
       let lastSeenAt = Date.now();
       let heartbeatConfirmed = false;
+      let resumedFromBackground = false;
       let heartbeat: ReturnType<typeof setInterval> | null = null;
 
       connection.on("open", () => {
@@ -380,7 +381,20 @@ export function usePeer({
         mesh.add(connection);
         lastSeenAt = Date.now();
         heartbeat = setInterval(() => {
-          if (heartbeatConfirmed && Date.now() - lastSeenAt > 6_000) {
+          // Browsers throttle timers in background tabs. Treat that suspension
+          // as a local scheduling gap, not evidence that the remote peer died.
+          if (document.hidden) {
+            resumedFromBackground = true;
+            lastSeenAt = Date.now();
+            return;
+          }
+          if (resumedFromBackground) {
+            resumedFromBackground = false;
+            lastSeenAt = Date.now();
+          }
+          const connectionState = connection.peerConnection.connectionState;
+          const transportFailed = connectionState === "failed" || connectionState === "disconnected" || connectionState === "closed";
+          if (heartbeatConfirmed && transportFailed && Date.now() - lastSeenAt > 15_000) {
             connection.close();
             return;
           }
