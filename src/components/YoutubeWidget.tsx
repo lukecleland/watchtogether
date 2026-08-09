@@ -53,6 +53,10 @@ function parseVideoId(input: string): string | null {
   return null;
 }
 
+function watchUrl(videoId: string): string {
+  return `https://www.youtube.com/watch?v=${videoId}`;
+}
+
 /** Project a playing media position onto this client's wall clock. */
 function currentSyncedTime(time: number, sentAt?: number): number {
   if (!sentAt) return time;
@@ -70,7 +74,9 @@ export function YoutubeWidget({
   onTitleChange,
 }: YoutubeWidgetProps) {
   const [hasVideo, setHasVideo] = useState(false);
-  const [inputValue, setInputValue] = useState("");
+  const [inputValue, setInputValue] = useState(() =>
+    initialVideoId ? watchUrl(initialVideoId) : "",
+  );
   const [minimised, setMinimised] = useState(false);
   const [inputError, setInputError] = useState(false);
 
@@ -123,6 +129,7 @@ export function YoutubeWidget({
   // Auto-load if created with an initial video ID (e.g. from a background URL drop)
   useEffect(() => {
     if (initialVideoId) {
+      setInputValue(watchUrl(initialVideoId));
       setHasVideo(true);
       loadVideo(initialVideoId);
     }
@@ -134,6 +141,7 @@ export function YoutubeWidget({
     (msg: SyncMessage) => {
       if (msg.type === "load") {
         if (msg.id !== id) return;
+        setInputValue(watchUrl(msg.videoId));
         setHasVideo(true);
         setMinimised(false);
         loadVideo(msg.videoId);
@@ -190,7 +198,7 @@ export function YoutubeWidget({
   };
 
   return (
-    <div className="flex flex-col h-full bg-zinc-900 border border-zinc-700 rounded-2xl overflow-hidden">
+    <div className="group flex flex-col h-full bg-zinc-900 border border-zinc-700 rounded-2xl overflow-hidden">
       {/* Header / drag handle */}
       <div className="drag-handle flex items-center justify-between px-3 py-2 bg-zinc-800 cursor-grab active:cursor-grabbing select-none shrink-0">
         <div className="flex items-center gap-2">
@@ -268,11 +276,11 @@ export function YoutubeWidget({
         </div>
       </div>
 
-      {!minimised && (
-        <>
-          {/* URL input */}
-          <div className="px-3 py-2 flex gap-2 shrink-0">
-            <div className="relative flex-1 min-w-0">
+      <div className={`relative flex-1 min-h-0 overflow-hidden ${minimised ? "hidden" : ""}`}>
+          {/* The URL control floats over the video instead of taking permanent
+              space. Focus keeps it visible while the pointer moves to type. */}
+          <div className="no-drag pointer-events-none absolute inset-x-0 top-0 z-10 bg-gradient-to-b from-black/90 to-transparent p-2 pb-6 opacity-0 transition-opacity group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100">
+            <div className="relative min-w-0">
               <input
                 type="text"
                 value={inputValue}
@@ -280,7 +288,7 @@ export function YoutubeWidget({
                 onPaste={onPaste}
                 onKeyDown={(e) => e.key === "Enter" && handleSubmit()}
                 placeholder="Paste a YouTube URL…"
-                className={`w-full bg-zinc-800 text-zinc-100 text-xs rounded-lg px-3 py-1.5 outline-none border transition-colors placeholder:text-zinc-500 ${
+                className={`w-full bg-zinc-900/95 text-zinc-100 text-xs rounded-lg px-3 py-2 outline-none border shadow-lg transition-colors placeholder:text-zinc-500 ${
                   inputValue ? "pr-6" : ""
                 } ${
                   inputError
@@ -311,31 +319,21 @@ export function YoutubeWidget({
                 </button>
               )}
             </div>
-            <button
-              onClick={handleSubmit}
-              className="bg-violet-600 hover:bg-violet-500 text-white text-xs font-semibold px-3 py-1.5 rounded-lg transition-colors whitespace-nowrap"
-            >
-              Load
-            </button>
           </div>
 
           {!hasVideo && (
-            <div className="px-3 pb-3 text-center text-zinc-600 text-xs shrink-0">
-              Paste a YouTube URL above to watch together
+            <div className="absolute inset-0 flex items-center justify-center px-4 text-center text-xs text-zinc-600">
+              Hover here and paste a YouTube URL to watch together
             </div>
           )}
-        </>
-      )}
 
-      {/*
-          Player lives outside the minimised conditional so the YT.Player
-          instance is never destroyed when collapsed. Hidden via CSS only.
-          `flex-1 min-h-0` lets it fill remaining panel height when visible.
-        */}
-      <div
-        ref={playerContainerRef}
-        className={`flex-1 min-h-0 ${!hasVideo || minimised ? "hidden" : ""}`}
-      />
+          {/* Player stays mounted while minimised so its YT.Player instance
+              and playback state survive collapsing the widget. */}
+          <div
+            ref={playerContainerRef}
+            className={`absolute inset-0 h-full w-full ${!hasVideo ? "hidden" : ""}`}
+          />
+        </div>
     </div>
   );
 }

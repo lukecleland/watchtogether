@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 
 /**
  * SummonButton — pull someone into this room through whatever app you'd
@@ -10,7 +11,7 @@ import { useEffect, useRef, useState } from "react";
  * One call covers WhatsApp, Messages, Mail, Signal and the rest, with nothing
  * to keep up to date as people change apps.
  *
- * Everywhere else we show our own short menu. Note that this is *not* simply a
+ * Everywhere else we show our own centred modal. Note that this is *not* simply a
  * fallback for browsers lacking the API: desktop Safari supports
  * `navigator.share` perfectly well, but the sheet it opens is Notes, Freeform,
  * Journal and Reminders — places to file a link rather than people to send it
@@ -73,32 +74,47 @@ function prefersNativeSheet(): boolean {
 }
 
 export function SummonButton({ roomCode, variant = "bar" }: SummonButtonProps) {
-  const [menuOpen, setMenuOpen] = useState(false);
+  const [modalOpen, setModalOpen] = useState(false);
   const [copied, setCopied] = useState(false);
-  const menuRef = useRef<HTMLDivElement>(null);
+  const modalRef = useRef<HTMLDivElement>(null);
   const buttonRef = useRef<HTMLButtonElement>(null);
   const copyTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const titleId = useId();
 
   useEffect(() => () => {
     if (copyTimer.current) clearTimeout(copyTimer.current);
   }, []);
 
-  // Clicking away closes the menu, so it never sits open over the canvas
+  // Escape closes the dialog. Move focus into it on open and return focus to
+  // the Summon button on close so keyboard users never lose their place.
   useEffect(() => {
-    if (!menuOpen) return;
-    const onDown = (e: PointerEvent) => {
-      const t = e.target as Node;
-      if (menuRef.current?.contains(t) || buttonRef.current?.contains(t)) return;
-      setMenuOpen(false);
+    if (!modalOpen) return;
+    const trigger = buttonRef.current;
+    modalRef.current?.querySelector<HTMLElement>("[data-autofocus]")?.focus();
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        setModalOpen(false);
+        return;
+      }
+      if (e.key !== "Tab" || !modalRef.current) return;
+      const focusable = Array.from(modalRef.current.querySelectorAll<HTMLElement>('a[href], button:not([disabled])'));
+      if (focusable.length === 0) return;
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (e.shiftKey && document.activeElement === first) {
+        e.preventDefault();
+        last.focus();
+      } else if (!e.shiftKey && document.activeElement === last) {
+        e.preventDefault();
+        first.focus();
+      }
     };
-    const onKey = (e: KeyboardEvent) => e.key === "Escape" && setMenuOpen(false);
-    window.addEventListener("pointerdown", onDown);
     window.addEventListener("keydown", onKey);
     return () => {
-      window.removeEventListener("pointerdown", onDown);
       window.removeEventListener("keydown", onKey);
+      trigger?.focus();
     };
-  }, [menuOpen]);
+  }, [modalOpen]);
 
   // Built fresh each time rather than read from window.location, so the room
   // parameter is right even if something else has touched the URL.
@@ -122,7 +138,7 @@ export function SummonButton({ roomCode, variant = "bar" }: SummonButtonProps) {
         });
       return;
     }
-    setMenuOpen((open) => !open);
+    setModalOpen(true);
   };
 
   const copyLink = () => {
@@ -182,8 +198,8 @@ export function SummonButton({ roomCode, variant = "bar" }: SummonButtonProps) {
             ? `Summon a friend to room ${roomCode}`
             : `Summon someone to room ${roomCode}`
         }
-        aria-haspopup={prefersNativeSheet() ? undefined : "menu"}
-        aria-expanded={prefersNativeSheet() ? undefined : menuOpen}
+        aria-haspopup={prefersNativeSheet() ? undefined : "dialog"}
+        aria-expanded={prefersNativeSheet() ? undefined : modalOpen}
       >
         {variant === "bar" && <span className="hidden sm:inline">{roomCode}</span>}
         {/* Outward arrow — the same gesture every platform uses for "send this
@@ -207,37 +223,59 @@ export function SummonButton({ roomCode, variant = "bar" }: SummonButtonProps) {
         </span>
       </button>
 
-      {menuOpen && (
+      {modalOpen && createPortal(
         <div
-          ref={menuRef}
-          role="menu"
-          className="absolute right-0 top-full mt-1.5 w-44 bg-zinc-900/95 backdrop-blur border border-zinc-700 rounded-xl p-1 shadow-xl"
-          style={{ zIndex: 1000 }}
+          className="fixed inset-0 z-[2000] flex items-center justify-center bg-black/65 p-4 backdrop-blur-sm"
+          onMouseDown={e => {
+            if (e.target === e.currentTarget) setModalOpen(false);
+          }}
         >
-          <p className="px-2.5 pt-1.5 pb-1 text-[11px] uppercase tracking-wide text-zinc-500">
-            Summon by
-          </p>
-          {shareLinks().map((link) => (
-            <a
-              key={link.key}
-              role="menuitem"
-              href={link.href}
-              target="_blank"
-              rel="noreferrer"
-              onClick={() => setMenuOpen(false)}
-              className="block px-2.5 py-1.5 rounded-lg text-xs font-medium text-zinc-300 hover:bg-zinc-800 transition-colors"
-            >
-              {link.label}
-            </a>
-          ))}
-          <button
-            role="menuitem"
-            onClick={copyLink}
-            className="w-full text-left px-2.5 py-1.5 rounded-lg text-xs font-medium text-zinc-300 hover:bg-zinc-800 transition-colors"
+          <div
+            ref={modalRef}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby={titleId}
+            className="w-full max-w-sm overflow-hidden rounded-2xl border border-zinc-700 bg-zinc-900 shadow-2xl"
           >
-            {copied ? "Link copied" : "Copy link"}
-          </button>
-        </div>
+            <div className="flex items-center justify-between border-b border-zinc-800 px-4 py-3">
+              <div>
+                <h2 id={titleId} className="text-sm font-semibold text-zinc-100">Summon a friend</h2>
+                <p className="mt-0.5 text-xs text-zinc-500">Invite someone to room <span className="font-mono text-zinc-400">{roomCode}</span></p>
+              </div>
+              <button
+                onClick={() => setModalOpen(false)}
+                aria-label="Close invite dialog"
+                className="rounded-lg p-1.5 text-zinc-500 hover:bg-zinc-800 hover:text-white"
+              >
+                <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5}>
+                  <path strokeLinecap="round" d="M6 6l12 12M18 6L6 18" />
+                </svg>
+              </button>
+            </div>
+            <div className="grid gap-2 p-4">
+              {shareLinks().map((link, index) => (
+                <a
+                  key={link.key}
+                  data-autofocus={index === 0 ? "true" : undefined}
+                  href={link.href}
+                  target="_blank"
+                  rel="noreferrer"
+                  onClick={() => setModalOpen(false)}
+                  className="rounded-xl border border-zinc-700 bg-zinc-800 px-4 py-3 text-sm font-medium text-zinc-200 transition-colors hover:border-violet-500 hover:bg-zinc-700"
+                >
+                  {link.label}
+                </a>
+              ))}
+              <button
+                onClick={copyLink}
+                className="rounded-xl border border-zinc-700 bg-zinc-800 px-4 py-3 text-left text-sm font-medium text-zinc-200 transition-colors hover:border-violet-500 hover:bg-zinc-700"
+              >
+                {copied ? "Link copied" : "Copy link"}
+              </button>
+            </div>
+          </div>
+        </div>,
+        document.body
       )}
     </div>
   );
