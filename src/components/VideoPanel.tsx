@@ -8,6 +8,11 @@ interface VideoPanelProps {
   /** Whether this panel currently has a dock shortcut. */
   docked?: boolean;
   onToggleDock?: () => void;
+  localControls?: boolean;
+  microphoneEnabled?: boolean;
+  cameraEnabled?: boolean;
+  onToggleMicrophone?: () => void;
+  onToggleCamera?: () => void;
 }
 
 export function VideoPanel({
@@ -16,6 +21,11 @@ export function VideoPanel({
   muted = false,
   docked = false,
   onToggleDock,
+  localControls = false,
+  microphoneEnabled = true,
+  cameraEnabled = true,
+  onToggleMicrophone,
+  onToggleCamera,
 }: VideoPanelProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
 
@@ -38,7 +48,7 @@ export function VideoPanel({
     // Always start muted so iOS autoplay policy allows the video to play.
     // Audio is unlocked separately via user gesture (see unlockAudio below).
     video.muted = true;
-    setAudioUnlocked(false);
+    queueMicrotask(() => setAudioUnlocked(false));
     if (stream) {
       // Explicit play() call — iOS sometimes ignores the autoPlay HTML attribute.
       video.play().catch(() => {
@@ -78,9 +88,19 @@ export function VideoPanel({
             {label}
           </span>
         </div>
-        {onToggleDock && (
-          <DockButton docked={docked} onToggle={onToggleDock} />
-        )}
+        <div className="flex items-center gap-2">
+          {localControls && (
+            <>
+              <button onClick={onToggleMicrophone} className={`no-drag transition-colors ${microphoneEnabled ? "text-zinc-300 hover:text-white" : "text-red-400 hover:text-red-300"}`} title={microphoneEnabled ? "Mute microphone" : "Unmute microphone"} aria-label={microphoneEnabled ? "Mute microphone" : "Unmute microphone"} aria-pressed={!microphoneEnabled}>
+                <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d={microphoneEnabled ? "M12 3a3 3 0 00-3 3v6a3 3 0 006 0V6a3 3 0 00-3-3zM5 11a7 7 0 0014 0M12 18v3M9 21h6" : "M4 4l16 16M9 9v3a3 3 0 004.6 2.53M15 10V6a3 3 0 00-5.12-2.12M5 11a7 7 0 0011.1 5.67M19 11a7 7 0 01-.7 3.05M12 18v3M9 21h6"} /></svg>
+              </button>
+              <button onClick={onToggleCamera} className={`no-drag transition-colors ${cameraEnabled ? "text-zinc-300 hover:text-white" : "text-red-400 hover:text-red-300"}`} title={cameraEnabled ? "Stop camera" : "Start camera"} aria-label={cameraEnabled ? "Stop camera" : "Start camera"} aria-pressed={!cameraEnabled}>
+                <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d={cameraEnabled ? "M15 10l5-3v10l-5-3v2a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h8a2 2 0 012 2v2z" : "M4 4l16 16M15 10l5-3v10l-3.5-2.1M13 6H5a2 2 0 00-2 2v8a2 2 0 002 2h8a2 2 0 002-2v-1"} /></svg>
+              </button>
+            </>
+          )}
+          {onToggleDock && <DockButton docked={docked} onToggle={onToggleDock} />}
+        </div>
       </div>
 
       {/* Video */}
@@ -96,6 +116,9 @@ export function VideoPanel({
               // changes to the muted boolean attribute after initial render.
               className={`w-full h-full object-cover ${muted ? "scale-x-[-1]" : ""}`}
             />
+            {localControls && !cameraEnabled && (
+              <div className="pointer-events-none absolute inset-0 flex items-center justify-center bg-zinc-950/90 text-xs font-medium text-zinc-400">Camera off</div>
+            )}
 
             {/* iOS audio-unlock overlay — shown for remote streams until tapped */}
             {showUnlockOverlay && (

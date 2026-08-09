@@ -53,6 +53,10 @@ interface DockProps {
   onRename: (id: string, label: string) => void;
   /** Nudge the other person to look at this one. */
   onPing: (id: string) => void;
+  /** Participant chips use double-click for peer viewport actions. */
+  onParticipantDoubleClick: (entry: DockEntry) => void;
+  /** Frame every item currently present on the shared canvas. */
+  onShowAll: () => void;
 }
 
 function DockIcon({ type }: { type: DockEntry["type"] }) {
@@ -176,13 +180,17 @@ export function DockButton({
   );
 }
 
-export function Dock({ entries, onJump, onRemove, onRename, onPing }: DockProps) {
+export function Dock({ entries, onJump, onRemove, onRename, onPing, onParticipantDoubleClick, onShowAll }: DockProps) {
   // Chips that have just been pinged, so the sender gets confirmation it went
   const [pinged, setPinged] = useState<string[]>([]);
   const pingTimers = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
+  const participantClickTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => {
     const timers = pingTimers.current;
-    return () => Object.values(timers).forEach(clearTimeout);
+    return () => {
+      Object.values(timers).forEach(clearTimeout);
+      if (participantClickTimer.current) clearTimeout(participantClickTimer.current);
+    };
   }, []);
 
   const ping = (id: string) => {
@@ -215,8 +223,6 @@ export function Dock({ entries, onJump, onRemove, onRename, onPing }: DockProps)
     setEditingId(null);
   };
 
-  if (entries.length === 0) return null;
-
   return (
     <div
       className="fixed left-1/2 -translate-x-1/2 flex items-center gap-1.5 bg-zinc-900/90 backdrop-blur border border-zinc-700 rounded-2xl px-2 py-2 shadow-xl max-w-[calc(100vw-2rem)] overflow-x-auto"
@@ -225,6 +231,17 @@ export function Dock({ entries, onJump, onRemove, onRename, onPing }: DockProps)
         bottom: "calc(1rem + env(safe-area-inset-bottom))",
       }}
     >
+      <button
+        onClick={onShowAll}
+        className="flex items-center gap-1.5 shrink-0 rounded-xl border border-zinc-700 bg-zinc-800 px-2.5 py-1.5 text-xs font-medium text-zinc-300 transition-colors hover:bg-zinc-700 hover:text-white"
+        title="Zoom to fit all canvas content"
+        aria-label="Show all canvas content"
+      >
+        <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+          <path strokeLinecap="round" strokeLinejoin="round" d="M8 3H3v5M16 3h5v5M8 21H3v-5M16 21h5v-5" />
+        </svg>
+        <span>Show all</span>
+      </button>
       {entries.map((entry) =>
         editingId === entry.id ? (
           // ── Rename mode ──
@@ -261,7 +278,24 @@ export function Dock({ entries, onJump, onRemove, onRename, onPing }: DockProps)
             }`}
           >
             <button
-              onClick={() => onJump(entry.id)}
+              onClick={() => {
+                if (entry.type !== "local" && entry.type !== "remote") {
+                  onJump(entry.id);
+                  return;
+                }
+                if (participantClickTimer.current) clearTimeout(participantClickTimer.current);
+                participantClickTimer.current = setTimeout(() => {
+                  onJump(entry.id);
+                  participantClickTimer.current = null;
+                }, 220);
+              }}
+              onDoubleClick={() => {
+                if (entry.type === "local" || entry.type === "remote") {
+                  if (participantClickTimer.current) clearTimeout(participantClickTimer.current);
+                  participantClickTimer.current = null;
+                  onParticipantDoubleClick(entry);
+                }
+              }}
               className="flex items-center gap-1.5 min-w-0"
               title={
                 entry.pulsing

@@ -165,6 +165,8 @@ function parseYouTubeVideoId(input: string): string | null {
 export function Session({ roomCode, isHost }: SessionProps) {
 	const [savedRoom] = useState(() => loadRoomSnapshot(roomCode));
 	const [localStream, setLocalStream] = useState<MediaStream | null>(null);
+	const [microphoneEnabled, setMicrophoneEnabled] = useState(true);
+	const [cameraEnabled, setCameraEnabled] = useState(true);
 	const [mediaError, setMediaError] = useState<string | null>(null);
 	const [fixedPanels, setFixedPanels] = useState<Record<PanelId, PanelState>>(() => savedRoom?.fixedPanels ?? defaultFixedPanels());
 	const [remotePanelStates, setRemotePanelStates] = useState<Record<string, PanelState>>({});
@@ -262,6 +264,9 @@ export function Session({ roomCode, isHost }: SessionProps) {
 	const [customLabels, setCustomLabels] = useState<Record<string, string>>(() => savedRoom?.customLabels ?? {});
 	// In-flight "fly to panel" animation, so a second jump cancels the first
 	const jumpAnimRef = useRef<number | null>(null);
+	const pendingViewRequestRef = useRef<string | null>(null);
+	const sendSyncRef = useRef<(message: SyncMessage) => void>(() => {});
+	const [viewSuggestion, setViewSuggestion] = useState<{ from: string; canvas: { x: number; y: number; scale: number } } | null>(null);
 
 	// Whiteboard
 	const whiteboardRef = useRef<WhiteboardHandle>(null);
@@ -505,8 +510,29 @@ export function Session({ roomCode, isHost }: SessionProps) {
 			if (!isHost) applyRoomSnapshot(msg.snapshot);
 			return;
 		}
+		if (msg.type === 'view-request') {
+			if (msg.id === 'local') {
+				const current = canvasStateRef.current;
+				sendSyncRef.current({ type: 'view-response', id: 'local', canvas: { x: current.x / window.innerWidth, y: current.y / window.innerHeight, scale: current.scale } });
+			}
+			return;
+		}
+		if (msg.type === 'view-response') {
+			if (pendingViewRequestRef.current === msg.id) {
+				pendingViewRequestRef.current = null;
+				setCanvas({ x: msg.canvas.x * window.innerWidth, y: msg.canvas.y * window.innerHeight, scale: msg.canvas.scale });
+			}
+			return;
+		}
+		if (msg.type === 'view-suggestion') {
+			setViewSuggestion({ from: msg.id, canvas: msg.canvas });
+			return;
+		}
 		// Every message that carries panel geometry carries a z with it
 		if ('state' in msg) noteRemoteZ(msg.state.z);
+		if (msg.type.startsWith('spawn-') && 'id' in msg) {
+			setDockedIds(prev => (prev.includes(msg.id) ? prev : [...prev, msg.id]));
+		}
 
 		if (msg.type === 'panel-update') {
 			const remotePeerId = peerIdFromPanelId(msg.id);
@@ -675,6 +701,7 @@ export function Session({ roomCode, isHost }: SessionProps) {
 		dataConnection,
 		onRemoteSync: handleRemoteSync
 	});
+	sendSyncRef.current = sendSync;
 
 	const sendPanelUpdate = useCallback(
 		(id: string, state: PanelState) => {
@@ -736,7 +763,6 @@ export function Session({ roomCode, isHost }: SessionProps) {
 				h: r.h / window.innerHeight,
 				label: tag.label
 			});
-			sendSync({ type: 'dock-tag', id });
 		},
 		[sendSync]
 	);
@@ -1041,6 +1067,47 @@ export function Session({ roomCode, isHost }: SessionProps) {
 		sendSync({ type: 'dock-ping', id });
 	};
 
+	const handleParticipantDoubleClick = (entry: DockEntry) => {
+		if (entry.type === 'local') {
+			const current = canvasStateRef.current;
+			sendSync({ type: 'view-suggestion', id: 'local', canvas: { x: current.x / window.innerWidth, y: current.y / window.innerHeight, scale: current.scale } });
+			return;
+		}
+		pendingViewRequestRef.current = entry.id;
+		sendSync({ type: 'view-request', id: entry.id });
+	};
+
+	const showAll = () => {
+		const bounds: Array<{ x: number; y: number; width: number; height: number }> = [];
+		if (localStream?.getTracks().length) bounds.push(fixedPanels.local);
+		bounds.push(...Object.values(remotePanelStates), ...dynamicPanels.map(panel => panel.state));
+		positionTags.forEach(tag => bounds.push({ x: tag.x, y: tag.y, width: tag.w ?? 1, height: tag.h ?? 1 }));
+		for (const item of whiteboardRef.current?.getItems() ?? []) {
+			if ('kind' in item && item.kind === 'text') {
+				const size = item.size * Math.min(window.innerWidth, window.innerHeight);
+				bounds.push({ x: item.x * window.innerWidth, y: item.y * window.innerHeight - size, width: Math.max(size, item.text.length * size * 0.55), height: size * 1.3 });
+			} else if ('x0' in item) {
+				const x0 = item.x0 * window.innerWidth;
+				const y0 = item.y0 * window.innerHeight;
+				const x1 = item.x1 * window.innerWidth;
+				const y1 = item.y1 * window.innerHeight;
+				bounds.push({ x: Math.min(x0, x1), y: Math.min(y0, y1), width: Math.max(1, Math.abs(x1 - x0)), height: Math.max(1, Math.abs(y1 - y0)) });
+			}
+		}
+		if (!bounds.length) {
+			setCanvas({ x: 0, y: 0, scale: 1 });
+			return;
+		}
+		const minX = Math.min(...bounds.map(item => item.x));
+		const minY = Math.min(...bounds.map(item => item.y));
+		const maxX = Math.max(...bounds.map(item => item.x + item.width));
+		const maxY = Math.max(...bounds.map(item => item.y + item.height));
+		const width = Math.max(1, maxX - minX);
+		const height = Math.max(1, maxY - minY);
+		const scale = Math.max(0.25, Math.min(4, (window.innerWidth * 0.9) / width, (window.innerHeight * 0.78) / height));
+		setCanvas({ x: window.innerWidth / 2 - (minX + width / 2) * scale, y: window.innerHeight / 2 - (minY + height / 2) * scale, scale });
+	};
+
 	// Empty string clears the custom name and reverts to the automatic label.
 	// Shared, since these are bookmarks in a canvas both people are looking at.
 	const renameDockEntry = (id: string, label: string) => {
@@ -1153,6 +1220,7 @@ export function Session({ roomCode, isHost }: SessionProps) {
 		const id = remoteId ?? crypto.randomUUID();
 		const state: PanelState = { x: worldX, y: worldY, width: w, height: h, z: nextZ };
 		setDynamicPanels(prev => [...prev, { id, type, state, ...extra }]);
+		setDockedIds(prev => (prev.includes(id) ? prev : [...prev, id]));
 
 		// Only sync outward for locally-initiated spawns
 		if (!remoteId) {
@@ -1203,6 +1271,20 @@ export function Session({ roomCode, isHost }: SessionProps) {
 	const updateDynamicPanel = useCallback((id: string, patch: Partial<DynamicPanel>) => {
 		setDynamicPanels(prev => prev.map(panel => panel.id === id ? { ...panel, ...patch } : panel));
 	}, []);
+	const toggleMicrophone = useCallback(() => {
+		const tracks = localStream?.getAudioTracks() ?? [];
+		if (!tracks.length) return;
+		const enabled = !tracks.some(track => track.enabled);
+		tracks.forEach(track => { track.enabled = enabled; });
+		setMicrophoneEnabled(enabled);
+	}, [localStream]);
+	const toggleCamera = useCallback(() => {
+		const tracks = localStream?.getVideoTracks() ?? [];
+		if (!tracks.length) return;
+		const enabled = !tracks.some(track => track.enabled);
+		tracks.forEach(track => { track.enabled = enabled; });
+		setCameraEnabled(enabled);
+	}, [localStream]);
 
 	useEffect(() => {
 		let stream: MediaStream | undefined;
@@ -1762,6 +1844,20 @@ export function Session({ roomCode, isHost }: SessionProps) {
 				</div>
 			)}
 
+			{viewSuggestion && (
+				<div className="fixed left-3 top-16 z-[1000] flex items-center gap-2 rounded-xl border border-violet-500/60 bg-zinc-900/95 p-2 shadow-xl backdrop-blur">
+					<button
+						onClick={() => {
+							setCanvas({ x: viewSuggestion.canvas.x * window.innerWidth, y: viewSuggestion.canvas.y * window.innerHeight, scale: viewSuggestion.canvas.scale });
+							setViewSuggestion(null);
+						}}
+						className="rounded-lg bg-violet-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-violet-500">
+						A participant suggested their view — switch
+					</button>
+					<button onClick={() => setViewSuggestion(null)} className="px-1 text-zinc-400 hover:text-white" title="Dismiss" aria-label="Dismiss view suggestion">×</button>
+				</div>
+			)}
+
 			{/* Error banner — sits below the top bar (height is variable due to safe-area) */}
 			{error && (
 				<div
@@ -1885,7 +1981,7 @@ export function Session({ roomCode, isHost }: SessionProps) {
 						{zoomTagHandle('local', 'You')}
 						{/* No onToggleDock: participants are permanently docked, so a
 						    bookmark toggle here would be a button that does nothing */}
-						<VideoPanel stream={localStream} label="You" muted docked={dockedIds.includes('local')} />
+						<VideoPanel stream={localStream} label="You" muted docked={dockedIds.includes('local')} localControls microphoneEnabled={microphoneEnabled} cameraEnabled={cameraEnabled} onToggleMicrophone={toggleMicrophone} onToggleCamera={toggleCamera} />
 					</DraggablePanel>
 				)}
 
@@ -2013,7 +2109,7 @@ export function Session({ roomCode, isHost }: SessionProps) {
 			</div>
 
 			{/* Dock — fixed overlay above the canvas; shortcuts back to docked panels */}
-			<Dock entries={dockEntries} onJump={jumpToPanel} onRemove={removeDockEntry} onRename={renameDockEntry} onPing={pingDockEntry} />
+			<Dock entries={dockEntries} onJump={jumpToPanel} onRemove={removeDockEntry} onRename={renameDockEntry} onPing={pingDockEntry} onParticipantDoubleClick={handleParticipantDoubleClick} onShowAll={showAll} />
 		</div>
 	);
 }
