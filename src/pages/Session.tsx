@@ -81,6 +81,25 @@ function normalisePanel(s: PanelState): PanelState {
 function denormalisePanel(s: PanelState): PanelState {
 	return { ...s };
 }
+
+// Presentation messages carry the world point at the centre of the viewport,
+// rather than screen-space translation. A phone and a desktop can therefore
+// follow the same place without requiring identical viewport dimensions.
+function presentationView(canvas: { x: number; y: number; scale: number }) {
+	return {
+		x: (window.innerWidth / 2 - canvas.x) / canvas.scale,
+		y: (window.innerHeight / 2 - canvas.y) / canvas.scale,
+		scale: canvas.scale
+	};
+}
+
+function canvasFromPresentation(view: { x: number; y: number; scale: number }) {
+	return {
+		x: window.innerWidth / 2 - view.x * view.scale,
+		y: window.innerHeight / 2 - view.y * view.scale,
+		scale: view.scale
+	};
+}
 // ─────────────────────────────────────────────────────────────────────────
 
 function defaultFixedPanels(): Record<PanelId, PanelState> {
@@ -242,6 +261,11 @@ export function Session({ roomCode, isHost }: SessionProps) {
 	const pendingViewRequestRef = useRef<string | null>(null);
 	const sendSyncRef = useRef<(message: SyncMessage) => void>(() => {});
 	const [viewSuggestion, setViewSuggestion] = useState<{ from: string; canvas: { x: number; y: number; scale: number } } | null>(null);
+	const [presentationInvite, setPresentationInvite] = useState<{ id: string; presenterPeerId: string; canvas: { x: number; y: number; scale: number } } | null>(null);
+	const [presentingId, setPresentingId] = useState<string | null>(null);
+	const [following, setFollowing] = useState<{ id: string; presenterPeerId: string } | null>(null);
+	const [presentationFollowers, setPresentationFollowers] = useState<string[]>([]);
+	const presentationSendRef = useRef<{ lastAt: number; timer: ReturnType<typeof setTimeout> | null }>({ lastAt: 0, timer: null });
 
 	// Whiteboard
 	const whiteboardRef = useRef<WhiteboardHandle>(null);
@@ -469,6 +493,28 @@ export function Session({ roomCode, isHost }: SessionProps) {
 
 	// Panel sync — wired to the same data channel as YouTube sync
 	const handleRemoteSync = useCallback((msg: SyncMessage) => {
+		const sourcePeerId = (msg as SyncMessage & { __meshSourcePeerId?: string }).__meshSourcePeerId;
+		if (msg.type === 'presentation-invite') {
+			if (sourcePeerId && msg.id !== presentingId) setPresentationInvite({ id: msg.id, presenterPeerId: sourcePeerId, canvas: canvasFromPresentation(msg.canvas) });
+			return;
+		}
+		if (msg.type === 'presentation-accept') {
+			if (msg.id === presentingId && sourcePeerId) setPresentationFollowers(previous => previous.includes(sourcePeerId) ? previous : [...previous, sourcePeerId]);
+			return;
+		}
+		if (msg.type === 'presentation-leave') {
+			if (msg.id === presentingId && sourcePeerId) setPresentationFollowers(previous => previous.filter(peerId => peerId !== sourcePeerId));
+			return;
+		}
+		if (msg.type === 'presentation-view') {
+			if (following?.id === msg.id && following.presenterPeerId === sourcePeerId) setCanvas(canvasFromPresentation(msg.canvas));
+			return;
+		}
+		if (msg.type === 'presentation-stop') {
+			if (following?.id === msg.id && following.presenterPeerId === sourcePeerId) setFollowing(null);
+			if (presentationInvite?.id === msg.id && presentationInvite.presenterPeerId === sourcePeerId) setPresentationInvite(null);
+			return;
+		}
 		if (msg.type === 'room-state-request') {
 			if (isHost) sendRoomStateRef.current();
 			return;
@@ -669,7 +715,7 @@ export function Session({ roomCode, isHost }: SessionProps) {
 			whiteboardRef.current?.clearCanvas();
 			markWhiteboardDirty();
 		}
-	}, [applyRoomSnapshot, forgetPanel, isHost, markWhiteboardDirty, startPulse, noteRemoteZ]);
+	}, [applyRoomSnapshot, following, forgetPanel, isHost, markWhiteboardDirty, noteRemoteZ, presentationInvite, presentingId, startPulse]);
 
 	// We use useYouTubeSync here to route panel-update and whiteboard messages.
 	// YoutubeWidget mounts its own useYouTubeSync instance for YT playback messages.
@@ -678,6 +724,70 @@ export function Session({ roomCode, isHost }: SessionProps) {
 		onRemoteSync: handleRemoteSync
 	});
 	sendSyncRef.current = sendSync;
+
+	const startPresenting = useCallback(() => {
+		if (participantCount < 2) return;
+		const id = crypto.randomUUID();
+		if (following) sendSync({ type: 'presentation-leave', id: following.id });
+		setFollowing(null);
+		setPresentationInvite(null);
+		setPresentationFollowers([]);
+		setPresentingId(id);
+		const current = canvasStateRef.current;
+		sendSync({ type: 'presentation-invite', id, canvas: presentationView(current) });
+	}, [following, participantCount, sendSync]);
+
+	const stopPresenting = useCallback(() => {
+		if (!presentingId) return;
+		sendSync({ type: 'presentation-stop', id: presentingId });
+		setPresentingId(null);
+		setPresentationFollowers([]);
+	}, [presentingId, sendSync]);
+
+	const acceptPresentation = useCallback(() => {
+		if (!presentationInvite) return;
+		if (presentingId) sendSync({ type: 'presentation-stop', id: presentingId });
+		if (following) sendSync({ type: 'presentation-leave', id: following.id });
+		setPresentingId(null);
+		setPresentationFollowers([]);
+		setFollowing({ id: presentationInvite.id, presenterPeerId: presentationInvite.presenterPeerId });
+		setCanvas({ ...presentationInvite.canvas });
+		sendSync({ type: 'presentation-accept', id: presentationInvite.id });
+		setPresentationInvite(null);
+	}, [following, presentationInvite, presentingId, sendSync]);
+
+	const stopFollowing = useCallback(() => {
+		if (!following) return;
+		sendSync({ type: 'presentation-leave', id: following.id });
+		setFollowing(null);
+	}, [following, sendSync]);
+
+	// Viewport updates are intentionally throttled: panning can produce a state
+	// update for every pointer event, while presentation feels smooth at 12fps.
+	useEffect(() => {
+		if (!presentingId) return;
+		const sender = presentationSendRef.current;
+		const sendView = () => {
+			sender.lastAt = Date.now();
+			sender.timer = null;
+			sendSync({ type: 'presentation-view', id: presentingId, canvas: presentationView(canvasStateRef.current) });
+		};
+		const remaining = 80 - (Date.now() - sender.lastAt);
+		if (remaining <= 0) sendView();
+		else if (!sender.timer) sender.timer = setTimeout(sendView, remaining);
+	}, [canvas, presentingId, sendSync]);
+
+	useEffect(() => () => {
+		if (presentationSendRef.current.timer) clearTimeout(presentationSendRef.current.timer);
+	}, []);
+
+	useEffect(() => {
+		if (participantCount > 1) return;
+		setFollowing(null);
+		setPresentationInvite(null);
+		setPresentingId(null);
+		setPresentationFollowers([]);
+	}, [participantCount]);
 
 	const sendPanelUpdate = useCallback(
 		(id: string, state: PanelState) => {
@@ -1809,6 +1919,18 @@ export function Session({ roomCode, isHost }: SessionProps) {
 					)}
 				</div>
 
+				<button
+					onClick={presentingId ? stopPresenting : startPresenting}
+					disabled={!presentingId && participantCount < 2}
+					className={`flex h-8 shrink-0 items-center gap-1.5 rounded-lg border px-2 text-xs font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${presentingId ? 'border-violet-400 bg-violet-600 text-white hover:bg-violet-500' : 'border-zinc-700 bg-zinc-800 text-zinc-300 hover:bg-zinc-700'}`}
+					title={presentingId ? 'Stop presenting your viewport' : participantCount < 2 ? 'Invite someone before presenting' : 'Invite everyone to follow your viewport'}>
+					<svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} aria-hidden="true">
+						<path strokeLinecap="round" strokeLinejoin="round" d="M8 5h8a3 3 0 013 3v5a3 3 0 01-3 3h-3l-3.5 3v-3H8a3 3 0 01-3-3V8a3 3 0 013-3z" />
+						<path strokeLinecap="round" d="M9 9.5h6M9 12.5h4" />
+					</svg>
+					<span className="hidden lg:inline">{presentingId ? 'Stop presenting' : 'Present'}</span>
+				</button>
+
 				{/* Anyone in the room can summon, not just whoever opened it — a
 				    room holds four, so a guest may well be the one who wants to
 				    pull in the fourth. */}
@@ -1858,6 +1980,32 @@ export function Session({ roomCode, isHost }: SessionProps) {
 						A participant suggested their view — switch
 					</button>
 					<button onClick={() => setViewSuggestion(null)} className="px-1 text-zinc-400 hover:text-white" title="Dismiss" aria-label="Dismiss view suggestion">×</button>
+				</div>
+			)}
+
+			{presentationInvite && (
+				<div role="dialog" aria-label="Presentation invitation" className="fixed left-1/2 top-16 z-[1002] w-[min(26rem,calc(100vw-1.5rem))] -translate-x-1/2 rounded-xl border border-violet-500/60 bg-zinc-900/95 p-3 shadow-2xl backdrop-blur">
+					<p className="text-sm font-semibold text-white">A participant wants to present</p>
+					<p className="mt-1 text-xs leading-relaxed text-zinc-400">Accept to follow their canvas as they pan and zoom. You can stop following at any time.</p>
+					<div className="mt-3 flex justify-end gap-2">
+						<button onClick={() => setPresentationInvite(null)} className="rounded-lg px-3 py-1.5 text-xs font-medium text-zinc-300 hover:bg-zinc-800 hover:text-white">Decline</button>
+						<button onClick={acceptPresentation} className="rounded-lg bg-violet-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-violet-500">Follow presenter</button>
+					</div>
+				</div>
+			)}
+
+			{following && (
+				<div className="fixed left-3 top-16 z-[1001] flex items-center gap-2 rounded-xl border border-violet-500/60 bg-zinc-900/95 px-3 py-2 shadow-xl backdrop-blur">
+					<span className="flex items-center gap-2 text-xs font-semibold text-violet-200"><span className="h-2 w-2 animate-pulse rounded-full bg-violet-400" />Following presenter</span>
+					<button onClick={stopFollowing} className="rounded-lg bg-zinc-800 px-2.5 py-1 text-xs font-medium text-white hover:bg-zinc-700">Stop following</button>
+				</div>
+			)}
+
+			{presentingId && (
+				<div className="fixed left-3 top-16 z-[1001] flex items-center gap-2 rounded-xl border border-violet-500/60 bg-zinc-900/95 px-3 py-2 text-xs shadow-xl backdrop-blur">
+					<span className="font-semibold text-violet-200">Presenting your view</span>
+					<span className="text-zinc-500">{presentationFollowers.length} following</span>
+					<button onClick={stopPresenting} className="rounded-lg bg-zinc-800 px-2.5 py-1 font-medium text-white hover:bg-zinc-700">Stop</button>
 				</div>
 			)}
 

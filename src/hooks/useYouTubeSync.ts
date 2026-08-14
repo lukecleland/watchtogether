@@ -112,6 +112,11 @@ export type SyncMessage =
 	| { type: 'view-request'; id: string }
 	| { type: 'view-response'; id: string; canvas: { x: number; y: number; scale: number } }
 	| { type: 'view-suggestion'; id: string; canvas: { x: number; y: number; scale: number } }
+	| { type: 'presentation-invite'; id: string; canvas: { x: number; y: number; scale: number } }
+	| { type: 'presentation-accept'; id: string }
+	| { type: 'presentation-leave'; id: string }
+	| { type: 'presentation-view'; id: string; canvas: { x: number; y: number; scale: number } }
+	| { type: 'presentation-stop'; id: string }
 	/** Announces a chunked file transfer and the panel it belongs to. */
 	| {
 			type: 'file-begin';
