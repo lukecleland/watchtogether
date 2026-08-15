@@ -130,6 +130,17 @@ body {
   animation: position-tag-ripple 1.2s ease-out 2 forwards;
 }
 
+@keyframes laser-trail-fade {
+  from { opacity: 1; }
+  to { opacity: 0; }
+}
+
+.laser-trail-point {
+  pointer-events: none;
+  transform-origin: center;
+  animation: laser-trail-fade 900ms linear forwards;
+}
+
 /*
  * Sender-side ping confirmation — concentric rings radiating out from the
  * ping button, so clicking it visibly *does* something on your own screen
@@ -158,7 +169,8 @@ body {
 
 @media (prefers-reduced-motion: reduce) {
   .dock-pulse,
-  .position-tag-ripple {
+  .position-tag-ripple,
+  .laser-trail-point {
     animation: none;
   }
 

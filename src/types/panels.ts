@@ -2,7 +2,7 @@
 export type PanelId = "local" | "remote";
 
 /** The type of a dynamically-spawned panel. */
-export type DynamicPanelType = "youtube" | "audio" | "browser" | "note" | "code" | "recorder";
+export type DynamicPanelType = "youtube" | "audio" | "browser" | "note" | "code" | "recorder" | "image";
 
 export interface CodeContent {
   text: string;
@@ -13,6 +13,11 @@ export interface RecordingClip {
   id: string;
   name: string;
   file: File;
+}
+
+export interface RecordingMetadata {
+  id: string;
+  name: string;
 }
 
 export interface PanelPlayback {
@@ -99,12 +104,16 @@ export interface DynamicPanel {
   state: PanelState;
   initialVideoId?: string;
   initialFile?: File;
+  /** Filename retained when a portable bundle does not contain media bytes. */
+  mediaFileName?: string;
   /** Live contents for a note panel — updated in place as either peer edits. */
   note?: NoteContent;
   /** Live contents for a code panel. */
   code?: CodeContent;
   /** Completed screen recordings retained for this session only. */
   recordings?: RecordingClip[];
+  /** Clip list retained independently of locally available File objects. */
+  recordingMetadata?: RecordingMetadata[];
   playback?: PanelPlayback;
   initialUrl?: string;
 }

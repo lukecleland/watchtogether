@@ -67,16 +67,35 @@ export interface WhiteboardText {
   font: TextFont;
 }
 
+export type ShapeKind = "rectangle" | "ellipse" | "line" | "arrow";
+
+export interface WhiteboardShape {
+  kind: "shape";
+  id: string;
+  shape: ShapeKind;
+  x0: number;
+  y0: number;
+  x1: number;
+  y1: number;
+  color: string;
+  width: number;
+}
+
 /** Everything the board can hold, in the order it was laid down. */
-export type CanvasItem = WhiteboardStroke | WhiteboardText;
+export type CanvasItem = WhiteboardStroke | WhiteboardText | WhiteboardShape;
 
 function isText(i: CanvasItem): i is WhiteboardText {
   return (i as WhiteboardText).kind === "text";
 }
 
+function isShape(i: CanvasItem): i is WhiteboardShape {
+  return (i as WhiteboardShape).kind === "shape";
+}
+
 export interface WhiteboardHandle {
   drawStroke(stroke: WhiteboardStroke): void;
   drawText(item: WhiteboardText): void;
+  drawShape(item: WhiteboardShape): void;
   editText(id: string, text: string): void;
   moveText(id: string, x: number, y: number): void;
   clearCanvas(): void;
@@ -85,7 +104,7 @@ export interface WhiteboardHandle {
 }
 
 interface WhiteboardProps {
-  tool: "pointer" | "pen" | "eraser" | "text" | "region";
+  tool: "pointer" | "pen" | "eraser" | "text" | "region" | "shape" | "connector";
   /** True while the session is actively panning the canvas. */
   isPanning?: boolean;
   color: string;
@@ -97,6 +116,8 @@ interface WhiteboardProps {
   onText: (item: WhiteboardText) => void;
   onTextEdit: (id: string, text: string) => void;
   onTextMove: (id: string, x: number, y: number) => void;
+  onShape: (item: WhiteboardShape) => void;
+  shapeKind: ShapeKind;
   /** A dragged-out area, in world-normalised coordinates. */
   onRegion: (r: { x: number; y: number; w: number; h: number }) => void;
   canvasTransform: { x: number; y: number; scale: number };
@@ -143,6 +164,8 @@ const Whiteboard = forwardRef<WhiteboardHandle, WhiteboardProps>(
       onText,
       onTextEdit,
       onTextMove,
+      onShape,
+      shapeKind,
       onRegion,
       canvasTransform
     },
@@ -166,11 +189,15 @@ const Whiteboard = forwardRef<WhiteboardHandle, WhiteboardProps>(
     // Marquee for the region tool, in screen coordinates while dragging
     const [marquee, setMarquee] = useState<{ x0: number; y0: number; x1: number; y1: number } | null>(null);
     const marqueeRef = useRef<{ x0: number; y0: number; x1: number; y1: number } | null>(null);
+    const [shapeDraft, setShapeDraft] = useState<{ x0: number; y0: number; x1: number; y1: number } | null>(null);
+    const shapeDraftRef = useRef<{ x0: number; y0: number; x1: number; y1: number } | null>(null);
     // Rolling state for the fountain nib's speed-driven taper
     const fountainRef = useRef({ w: 1, at: 0 });
     // Always-current transform without stale closure issues
     const canvasTransformRef = useRef(canvasTransform);
-    canvasTransformRef.current = canvasTransform;
+    useEffect(() => {
+      canvasTransformRef.current = canvasTransform;
+    }, [canvasTransform]);
 
     // Draw a segment from world-normalised coordinates.
     // Applies the current canvas transform (pan + zoom) so strokes live in
@@ -338,9 +365,54 @@ const Whiteboard = forwardRef<WhiteboardHandle, WhiteboardProps>(
       ctx.restore();
     }, []);
 
+    const drawShapeItem = useCallback((item: WhiteboardShape) => {
+      const canvas = canvasRef.current;
+      const ctx = canvas?.getContext("2d");
+      if (!ctx || !canvas) return;
+      const dpr = window.devicePixelRatio || 1;
+      const vw = window.innerWidth;
+      const vh = window.innerHeight;
+      const { x: tx, y: ty, scale } = canvasTransformRef.current;
+      const x0 = (item.x0 * vw * scale + tx) * dpr;
+      const y0 = (item.y0 * vh * scale + ty) * dpr;
+      const x1 = (item.x1 * vw * scale + tx) * dpr;
+      const y1 = (item.y1 * vh * scale + ty) * dpr;
+      const lineWidth = item.width * Math.min(vw, vh) * scale * dpr;
+      const metal = metalFor(item.color);
+
+      ctx.save();
+      ctx.strokeStyle = metal?.[1] ?? item.color;
+      ctx.fillStyle = metal?.[1] ?? item.color;
+      ctx.lineWidth = lineWidth;
+      ctx.lineCap = "round";
+      ctx.lineJoin = "round";
+      ctx.beginPath();
+      if (item.shape === "rectangle") {
+        ctx.rect(Math.min(x0, x1), Math.min(y0, y1), Math.abs(x1 - x0), Math.abs(y1 - y0));
+      } else if (item.shape === "ellipse") {
+        ctx.ellipse((x0 + x1) / 2, (y0 + y1) / 2, Math.abs(x1 - x0) / 2, Math.abs(y1 - y0) / 2, 0, 0, Math.PI * 2);
+      } else {
+        ctx.moveTo(x0, y0);
+        ctx.lineTo(x1, y1);
+      }
+      ctx.stroke();
+
+      if (item.shape === "arrow") {
+        const angle = Math.atan2(y1 - y0, x1 - x0);
+        const head = Math.max(9 * scale * dpr, lineWidth * 4);
+        ctx.beginPath();
+        ctx.moveTo(x1, y1);
+        ctx.lineTo(x1 - Math.cos(angle - Math.PI / 6) * head, y1 - Math.sin(angle - Math.PI / 6) * head);
+        ctx.lineTo(x1 - Math.cos(angle + Math.PI / 6) * head, y1 - Math.sin(angle + Math.PI / 6) * head);
+        ctx.closePath();
+        ctx.fill();
+      }
+      ctx.restore();
+    }, []);
+
     const drawItem = useCallback(
-      (item: CanvasItem) => (isText(item) ? drawTextItem(item) : drawSegment(item)),
-      [drawSegment, drawTextItem]
+      (item: CanvasItem) => (isText(item) ? drawTextItem(item) : isShape(item) ? drawShapeItem(item) : drawSegment(item)),
+      [drawSegment, drawShapeItem, drawTextItem]
     );
 
     // Clear and repaint all stored strokes (called on zoom/pan/resize)
@@ -393,6 +465,10 @@ const Whiteboard = forwardRef<WhiteboardHandle, WhiteboardProps>(
           strokesRef.current.push(item);
           drawTextItem(item);
         },
+        drawShape(item: WhiteboardShape) {
+          strokesRef.current.push(item);
+          drawShapeItem(item);
+        },
         editText(id: string, text: string) {
           const idx = strokesRef.current.findIndex(i => isText(i) && i.id === id);
           if (idx === -1) return;
@@ -422,7 +498,7 @@ const Whiteboard = forwardRef<WhiteboardHandle, WhiteboardProps>(
           redrawAll();
         },
       }),
-      [drawSegment, drawTextItem, redrawAll],
+      [drawSegment, drawShapeItem, drawTextItem, redrawAll],
     );
 
     // Convert screen position to world-normalised coords (factors out zoom+pan)
@@ -539,11 +615,47 @@ const Whiteboard = forwardRef<WhiteboardHandle, WhiteboardProps>(
       setEditing(next);
     };
 
+    const constrainShapeEnd = (draft: { x0: number; y0: number }, x1: number, y1: number, constrain: boolean) => {
+      if (!constrain) return { x1, y1 };
+      const dx = x1 - draft.x0;
+      const dy = y1 - draft.y0;
+      if (shapeKind === "rectangle" || shapeKind === "ellipse") {
+        const side = Math.max(Math.abs(dx), Math.abs(dy));
+        return { x1: draft.x0 + Math.sign(dx || 1) * side, y1: draft.y0 + Math.sign(dy || 1) * side };
+      }
+      const length = Math.hypot(dx, dy);
+      const angle = Math.round(Math.atan2(dy, dx) / (Math.PI / 4)) * (Math.PI / 4);
+      return { x1: draft.x0 + Math.cos(angle) * length, y1: draft.y0 + Math.sin(angle) * length };
+    };
+
+    const finishShape = () => {
+      const draft = shapeDraftRef.current;
+      shapeDraftRef.current = null;
+      setShapeDraft(null);
+      if (!draft || Math.hypot(draft.x1 - draft.x0, draft.y1 - draft.y0) < 8) return;
+      const a = getPosFromClient(draft.x0, draft.y0);
+      const b = getPosFromClient(draft.x1, draft.y1);
+      const item: WhiteboardShape = {
+        kind: "shape",
+        id: crypto.randomUUID(),
+        shape: shapeKind,
+        x0: a.x,
+        y0: a.y,
+        x1: b.x,
+        y1: b.y,
+        color,
+        width: width / Math.min(window.innerWidth, window.innerHeight)
+      };
+      strokesRef.current.push(item);
+      drawShapeItem(item);
+      onShape(item);
+    };
+
     const handlePointerDown = (e: React.PointerEvent<HTMLCanvasElement>) => {
       // Touch has dedicated multi-touch-aware handlers below.
       if (e.pointerType === "touch") return;
       if (e.button !== 0) return; // left-click only; middle-click reserved for panning
-      if (tool === "pointer") return;
+      if (tool === "pointer" || tool === "connector") return;
       // Text is placed on click (see handleCanvasClick) — opening the caret on
       // pointer-down would mount the input mid-gesture, and the pointer-up that
       // follows lands on the canvas and blurs it straight back shut.
@@ -553,6 +665,13 @@ const Whiteboard = forwardRef<WhiteboardHandle, WhiteboardProps>(
         const m = { x0: e.clientX, y0: e.clientY, x1: e.clientX, y1: e.clientY };
         marqueeRef.current = m;
         setMarquee(m);
+        return;
+      }
+      if (tool === "shape") {
+        e.currentTarget.setPointerCapture(e.pointerId);
+        const draft = { x0: e.clientX, y0: e.clientY, x1: e.clientX, y1: e.clientY };
+        shapeDraftRef.current = draft;
+        setShapeDraft(draft);
         return;
       }
       e.currentTarget.setPointerCapture(e.pointerId);
@@ -567,7 +686,7 @@ const Whiteboard = forwardRef<WhiteboardHandle, WhiteboardProps>(
 
     const handlePointerMove = (e: React.PointerEvent<HTMLCanvasElement>) => {
       if (e.pointerType === "touch") return;
-      if (tool === "pointer" || tool === "text") {
+      if (tool === "pointer" || tool === "text" || tool === "connector") {
         setHoveredText(textAt(e.clientX, e.clientY));
         if (tool === "text") return;
       }
@@ -576,6 +695,15 @@ const Whiteboard = forwardRef<WhiteboardHandle, WhiteboardProps>(
         const m = { ...marqueeRef.current, x1: e.clientX, y1: e.clientY };
         marqueeRef.current = m;
         setMarquee(m);
+        return;
+      }
+      if (tool === "shape") {
+        const draft = shapeDraftRef.current;
+        if (!draft) return;
+        const end = constrainShapeEnd(draft, e.clientX, e.clientY, e.shiftKey);
+        const next = { ...draft, ...end };
+        shapeDraftRef.current = next;
+        setShapeDraft(next);
         return;
       }
       if (!isDrawingRef.current || !lastPointRef.current) return;
@@ -605,6 +733,10 @@ const Whiteboard = forwardRef<WhiteboardHandle, WhiteboardProps>(
         finishRegion();
         return;
       }
+      if (tool === "shape") {
+        finishShape();
+        return;
+      }
       isDrawingRef.current = false;
       lastPointRef.current = null;
     };
@@ -612,7 +744,7 @@ const Whiteboard = forwardRef<WhiteboardHandle, WhiteboardProps>(
     // ── Touch handlers (iOS / Android) ───────────────────────────────────
 
     const handleTouchStart = (e: React.TouchEvent<HTMLCanvasElement>) => {
-      if (tool === "pointer") return;
+      if (tool === "pointer" || tool === "connector") return;
       // Text is placed on the click the browser synthesises after the tap
       if (tool === "text") return;
       // Multi-touch is reserved for canvas pinch-to-zoom — cancel any drawing
@@ -622,6 +754,12 @@ const Whiteboard = forwardRef<WhiteboardHandle, WhiteboardProps>(
         return;
       }
       const touch = e.touches[0];
+      if (tool === "shape") {
+        const draft = { x0: touch.clientX, y0: touch.clientY, x1: touch.clientX, y1: touch.clientY };
+        shapeDraftRef.current = draft;
+        setShapeDraft(draft);
+        return;
+      }
       fountainRef.current = { w: 1, at: performance.now() };
       isDrawingRef.current = true;
       lastPointRef.current = getPosFromClient(touch.clientX, touch.clientY);
@@ -632,6 +770,17 @@ const Whiteboard = forwardRef<WhiteboardHandle, WhiteboardProps>(
       if (e.touches.length !== 1) {
         isDrawingRef.current = false;
         lastPointRef.current = null;
+        shapeDraftRef.current = null;
+        setShapeDraft(null);
+        return;
+      }
+      if (tool === "shape") {
+        const draft = shapeDraftRef.current;
+        if (!draft) return;
+        const touch = e.touches[0];
+        const next = { ...draft, x1: touch.clientX, y1: touch.clientY };
+        shapeDraftRef.current = next;
+        setShapeDraft(next);
         return;
       }
       if (!isDrawingRef.current || !lastPointRef.current) return;
@@ -766,6 +915,23 @@ const Whiteboard = forwardRef<WhiteboardHandle, WhiteboardProps>(
             </button>
           );
         })()}
+
+        {shapeDraft && (
+          <svg className="pointer-events-none fixed inset-0 z-[997] h-full w-full overflow-visible" aria-hidden="true">
+            <defs>
+              <marker id="shape-draft-arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto" markerUnits="strokeWidth">
+                <path d="M0 0l8 4-8 4z" fill={metalFor(color)?.[1] ?? color} />
+              </marker>
+            </defs>
+            {shapeKind === "rectangle" ? (
+              <rect x={Math.min(shapeDraft.x0, shapeDraft.x1)} y={Math.min(shapeDraft.y0, shapeDraft.y1)} width={Math.abs(shapeDraft.x1 - shapeDraft.x0)} height={Math.abs(shapeDraft.y1 - shapeDraft.y0)} fill="none" stroke={metalFor(color)?.[1] ?? color} strokeWidth={width} />
+            ) : shapeKind === "ellipse" ? (
+              <ellipse cx={(shapeDraft.x0 + shapeDraft.x1) / 2} cy={(shapeDraft.y0 + shapeDraft.y1) / 2} rx={Math.abs(shapeDraft.x1 - shapeDraft.x0) / 2} ry={Math.abs(shapeDraft.y1 - shapeDraft.y0) / 2} fill="none" stroke={metalFor(color)?.[1] ?? color} strokeWidth={width} />
+            ) : (
+              <line x1={shapeDraft.x0} y1={shapeDraft.y0} x2={shapeDraft.x1} y2={shapeDraft.y1} stroke={metalFor(color)?.[1] ?? color} strokeWidth={width} strokeLinecap="round" markerEnd={shapeKind === "arrow" ? "url(#shape-draft-arrow)" : undefined} />
+            )}
+          </svg>
+        )}
 
         {marquee && (
           <div

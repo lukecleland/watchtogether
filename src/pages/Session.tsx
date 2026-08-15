@@ -36,8 +36,9 @@ import { StickyNote } from '../components/StickyNote';
 import { BrowserWidget } from '../components/BrowserWidget';
 import { CodeWidget } from '../components/CodeWidget';
 import { ScreenRecorderWidget, type RecordingStatus } from '../components/ScreenRecorderWidget';
+import { ImageWidget } from '../components/ImageWidget';
 import { DraggablePanel } from '../components/DraggablePanel';
-import { Whiteboard, type WhiteboardHandle, type WhiteboardStroke, type WhiteboardText } from '../components/Whiteboard';
+import { Whiteboard, type ShapeKind, type WhiteboardHandle, type WhiteboardShape, type WhiteboardStroke, type WhiteboardText } from '../components/Whiteboard';
 import type { Nib, TextFont } from '../utils/brush';
 import { WhiteboardToolbar } from '../components/WhiteboardToolbar';
 import { Dock, type DockEntry } from '../components/Dock';
@@ -48,7 +49,9 @@ import type { PanelId, PanelState, DynamicPanel, NoteContent, CodeContent } from
 import { chordsOf, defaultNoteContent } from '../types/panels';
 import { TransferReceiver, base64ToChunk, chunkCount, sendFileInChunks } from '../utils/fileTransfer';
 import { codeFromText } from '../utils/code';
-import { loadRoomMedia, loadRoomSnapshot, ROOM_STATE_VERSION, saveRoomMedia, saveRoomSnapshot, type RoomSnapshot } from '../utils/roomPersistence';
+import { prepareImage } from '../utils/image';
+import { parseRoomBundle, serialiseRoomBundle } from '../utils/roomBundle';
+import { loadRoomMedia, loadRoomSnapshot, ROOM_STATE_VERSION, saveRoomMedia, saveRoomSnapshot, type PersistedConnector, type RoomSnapshot } from '../utils/roomPersistence';
 
 interface SessionProps {
 	roomCode: string;
@@ -68,6 +71,34 @@ interface PositionTag {
 	 */
 	w?: number;
 	h?: number;
+}
+
+interface LaserPoint {
+	id: string;
+	x: number;
+	y: number;
+	expiresAt: number;
+}
+
+interface RemoteCursor {
+	x: number;
+	y: number;
+	updatedAt: number;
+	laserPoints: LaserPoint[];
+}
+
+const CURSOR_COLOURS = ['#f472b6', '#22d3ee', '#a78bfa', '#34d399', '#fb923c', '#facc15'];
+
+function cursorColour(peerId: string): string {
+	let hash = 0;
+	for (let index = 0; index < peerId.length; index++) hash = (hash * 31 + peerId.charCodeAt(index)) >>> 0;
+	return CURSOR_COLOURS[hash % CURSOR_COLOURS.length];
+}
+
+function recordingMetadataFor(panel: DynamicPanel): Array<{ id: string; name: string }> | undefined {
+	const metadata = new Map(panel.recordingMetadata?.map(recording => [recording.id, recording]));
+	panel.recordings?.forEach(recording => metadata.set(recording.id, { id: recording.id, name: recording.name }));
+	return metadata.size ? [...metadata.values()] : undefined;
 }
 
 // ── Absolute canvas geometry ─────────────────────────────────────────────
@@ -99,6 +130,16 @@ function canvasFromPresentation(view: { x: number; y: number; scale: number }) {
 		y: window.innerHeight / 2 - view.y * view.scale,
 		scale: view.scale
 	};
+}
+
+function panelAnchor(panel: PanelState, toward: PanelState): { x: number; y: number } {
+	const x = panel.x + panel.width / 2;
+	const y = panel.y + panel.height / 2;
+	const dx = toward.x + toward.width / 2 - x;
+	const dy = toward.y + toward.height / 2 - y;
+	if (dx === 0 && dy === 0) return { x, y };
+	const edgeScale = 1 / Math.max(Math.abs(dx) / (panel.width / 2), Math.abs(dy) / (panel.height / 2));
+	return { x: x + dx * edgeScale, y: y + dy * edgeScale };
 }
 // ─────────────────────────────────────────────────────────────────────────
 
@@ -173,9 +214,13 @@ export function Session({ roomCode, isHost }: SessionProps) {
 		note: panel.note,
 		code: panel.code,
 		playback: panel.playback,
+		mediaFileName: panel.type === 'audio' ? panel.audioFileName : panel.type === 'image' ? panel.imageFileName : undefined,
+		recordingMetadata: panel.recordings,
 		recordings: []
 	})) ?? []);
 	const [positionTags, setPositionTags] = useState<PositionTag[]>(() => savedRoom?.positionTags ?? []);
+	const [connectors, setConnectors] = useState<PersistedConnector[]>(() => savedRoom?.connectors ?? []);
+	const [connectorStartId, setConnectorStartId] = useState<string | null>(null);
 	const positionTagsRef = useRef<PositionTag[]>([]);
 	positionTagsRef.current = positionTags;
 	// Tracks the highest z-index currently in use so we can raise panels on click
@@ -188,6 +233,9 @@ export function Session({ roomCode, isHost }: SessionProps) {
 	const [recorderStatuses, setRecorderStatuses] = useState<Record<string, RecordingStatus>>({});
 	const [widgetMenuOpen, setWidgetMenuOpen] = useState(false);
 	const widgetMenuRef = useRef<HTMLDivElement>(null);
+	const imageInputRef = useRef<HTMLInputElement>(null);
+	const roomBundleInputRef = useRef<HTMLInputElement>(null);
+	const [bundleNotice, setBundleNotice] = useState<{ kind: 'success' | 'error'; message: string } | null>(null);
 
 	// Ref for the outer container div — used to attach native touch listeners
 	const containerRef = useRef<HTMLDivElement>(null);
@@ -266,6 +314,10 @@ export function Session({ roomCode, isHost }: SessionProps) {
 	const [following, setFollowing] = useState<{ id: string; presenterPeerId: string } | null>(null);
 	const [presentationFollowers, setPresentationFollowers] = useState<string[]>([]);
 	const presentationSendRef = useRef<{ lastAt: number; timer: ReturnType<typeof setTimeout> | null }>({ lastAt: 0, timer: null });
+	const [laserEnabled, setLaserEnabled] = useState(false);
+	const [remoteCursors, setRemoteCursors] = useState<Record<string, RemoteCursor>>({});
+	const [localLaserPoints, setLocalLaserPoints] = useState<LaserPoint[]>([]);
+	const cursorSendRef = useRef({ lastAt: 0 });
 
 	// Whiteboard
 	const whiteboardRef = useRef<WhiteboardHandle>(null);
@@ -275,7 +327,8 @@ export function Session({ roomCode, isHost }: SessionProps) {
 		if (whiteboardSaveTimerRef.current) clearTimeout(whiteboardSaveTimerRef.current);
 		whiteboardSaveTimerRef.current = setTimeout(() => setWhiteboardRevision(value => value + 1), 400);
 	}, []);
-	const [wbTool, setWbTool] = useState<'pointer' | 'pen' | 'eraser' | 'text' | 'region'>('pointer');
+	const [wbTool, setWbTool] = useState<'pointer' | 'pen' | 'eraser' | 'text' | 'region' | 'shape' | 'connector'>('pointer');
+	const [wbShapeKind, setWbShapeKind] = useState<ShapeKind>('rectangle');
 	const [wbColor, setWbColor] = useState('#ffffff');
 	const [wbWidth, setWbWidth] = useState(3);
 	const [wbNib, setWbNib] = useState<Nib>('ballpoint');
@@ -302,6 +355,10 @@ export function Session({ roomCode, isHost }: SessionProps) {
 		let cancelled = false;
 		const hydration = Promise.all(savedRoom.panels.map(async persisted => {
 			if (persisted.type === 'audio' && persisted.audioFileName) {
+				const file = await loadRoomMedia(roomCode, persisted.id);
+				if (!cancelled && !ignoreLocalHydrationRef.current && file) setDynamicPanels(prev => prev.map(panel => panel.id === persisted.id ? { ...panel, initialFile: file } : panel));
+			}
+			if (persisted.type === 'image' && persisted.imageFileName) {
 				const file = await loadRoomMedia(roomCode, persisted.id);
 				if (!cancelled && !ignoreLocalHydrationRef.current && file) setDynamicPanels(prev => prev.map(panel => panel.id === persisted.id ? { ...panel, initialFile: file } : panel));
 			}
@@ -339,14 +396,14 @@ export function Session({ roomCode, isHost }: SessionProps) {
 				initialUrl: panel.initialUrl,
 				note: panel.note,
 				code: panel.code,
-				audioFileName: panel.initialFile?.name ?? savedRoom?.panels.find(saved => saved.id === panel.id)?.audioFileName,
-				recordings: panel.recordings?.length
-					? panel.recordings.map(recording => ({ id: recording.id, name: recording.name }))
-					: savedRoom?.panels.find(saved => saved.id === panel.id)?.recordings,
+				audioFileName: panel.type === 'audio' ? panel.initialFile?.name ?? panel.mediaFileName ?? savedRoom?.panels.find(saved => saved.id === panel.id)?.audioFileName : undefined,
+				imageFileName: panel.type === 'image' ? panel.initialFile?.name ?? panel.mediaFileName ?? savedRoom?.panels.find(saved => saved.id === panel.id)?.imageFileName : undefined,
+				recordings: recordingMetadataFor(panel) ?? savedRoom?.panels.find(saved => saved.id === panel.id)?.recordings,
 				playback: panel.playback
 			})),
 			drawings: whiteboardRef.current?.getItems() ?? savedRoom?.drawings ?? [],
 			positionTags,
+			connectors,
 			dockedIds,
 			panelLabels,
 			customLabels,
@@ -366,7 +423,7 @@ export function Session({ roomCode, isHost }: SessionProps) {
 			});
 		});
 		return () => clearTimeout(saveTimer);
-	}, [canvas, customLabels, dockedIds, dynamicPanels, fixedPanels, panelLabels, positionTags, remotePanelStates, roomCode, savedRoom?.drawings, savedRoom?.panels, whiteboardRevision]);
+	}, [canvas, connectors, customLabels, dockedIds, dynamicPanels, fixedPanels, panelLabels, positionTags, remotePanelStates, roomCode, savedRoom?.drawings, savedRoom?.panels, whiteboardRevision]);
 
 	const { remoteStreams, dataConnection, participantCount, status, error, replaceVideoTrack } = usePeer({
 		roomCode,
@@ -478,9 +535,12 @@ export function Session({ roomCode, isHost }: SessionProps) {
 			note: panel.note,
 			code: panel.code,
 			playback: panel.playback,
+			mediaFileName: panel.type === 'audio' ? panel.audioFileName : panel.type === 'image' ? panel.imageFileName : undefined,
+			recordingMetadata: panel.recordings,
 			recordings: []
 		})));
 		setPositionTags(snapshot.positionTags.map(tag => ({ ...tag })));
+		setConnectors(snapshot.connectors?.map(connector => ({ ...connector })) ?? []);
 		setDockedIds(snapshot.dockedIds.map(swapFixedId));
 		setPanelLabels(snapshot.panelLabels);
 		setCustomLabels(Object.fromEntries(Object.entries(snapshot.customLabels).map(([id, label]) => [swapFixedId(id), label])));
@@ -490,6 +550,60 @@ export function Session({ roomCode, isHost }: SessionProps) {
 		// not store the host snapshot verbatim or it will replace this client's
 		// participant geometry on the next refresh.
 	}, []);
+
+	const applyPortableSnapshot = useCallback((snapshot: RoomSnapshot) => {
+		const panels: DynamicPanel[] = snapshot.panels.map(panel => ({
+			id: panel.id,
+			type: panel.type,
+			state: { ...panel.state },
+			initialVideoId: panel.initialVideoId,
+			initialUrl: panel.initialUrl,
+			note: panel.note,
+			code: panel.code,
+			playback: panel.playback,
+			mediaFileName: panel.type === 'audio' ? panel.audioFileName : panel.type === 'image' ? panel.imageFileName : undefined,
+			recordingMetadata: panel.recordings,
+			recordings: []
+		}));
+		const sharedIds = new Set([...panels.map(panel => panel.id), ...snapshot.positionTags.map(tag => tag.id)]);
+		const onlySharedLabels = (labels: Record<string, string>) => Object.fromEntries(Object.entries(labels).filter(([id]) => sharedIds.has(id)));
+		const scale = Math.max(0.25, Math.min(4, snapshot.canvas.scale));
+		const sourceWidth = Math.max(1, snapshot.viewport.width);
+		const sourceHeight = Math.max(1, snapshot.viewport.height);
+		const centreX = (sourceWidth / 2 - snapshot.canvas.x) / scale;
+		const centreY = (sourceHeight / 2 - snapshot.canvas.y) / scale;
+
+		setDynamicPanels(panels);
+		setPositionTags(snapshot.positionTags.map(tag => ({ ...tag })));
+		setConnectors((snapshot.connectors ?? []).filter(connector => sharedIds.has(connector.fromPanelId) && sharedIds.has(connector.toPanelId)).map(connector => ({ ...connector })));
+		setDockedIds(snapshot.dockedIds.filter(id => sharedIds.has(id)));
+		setPanelLabels(onlySharedLabels(snapshot.panelLabels));
+		setCustomLabels(onlySharedLabels(snapshot.customLabels));
+		setCanvas({ x: window.innerWidth / 2 - centreX * scale, y: window.innerHeight / 2 - centreY * scale, scale });
+		receiverRef.current.clear();
+		transferPanelRef.current = {};
+		setTransferProgress({});
+		setRecorderStatuses({});
+		whiteboardRef.current?.replaceItems(snapshot.drawings);
+		setWhiteboardRevision(revision => revision + 1);
+		topZRef.current = Math.max(20, ...panels.map(panel => panel.state.z));
+
+		// Bundles intentionally omit media bytes. If this browser still has files
+		// for the same room and panel ids, quietly reconnect them after restore.
+		void Promise.all(snapshot.panels.map(async panel => {
+			if ((panel.type === 'audio' && panel.audioFileName) || (panel.type === 'image' && panel.imageFileName)) {
+				const file = await loadRoomMedia(roomCode, panel.id).catch(() => null);
+				if (file) setDynamicPanels(previous => previous.map(item => item.id === panel.id ? { ...item, initialFile: file } : item));
+			}
+			if (panel.type === 'recorder' && panel.recordings?.length) {
+				const recordings = (await Promise.all(panel.recordings.map(async recording => {
+					const file = await loadRoomMedia(roomCode, panel.id, recording.id).catch(() => null);
+					return file ? { id: recording.id, name: recording.name, file } : null;
+				}))).filter(recording => recording !== null);
+				if (recordings.length) setDynamicPanels(previous => previous.map(item => item.id === panel.id ? { ...item, recordings } : item));
+			}
+		}));
+	}, [roomCode]);
 
 	// Panel sync — wired to the same data channel as YouTube sync
 	const handleRemoteSync = useCallback((msg: SyncMessage) => {
@@ -515,12 +629,39 @@ export function Session({ roomCode, isHost }: SessionProps) {
 			if (presentationInvite?.id === msg.id && presentationInvite.presenterPeerId === sourcePeerId) setPresentationInvite(null);
 			return;
 		}
+		if (msg.type === 'cursor-move') {
+			if (!sourcePeerId) return;
+			const now = Date.now();
+			setRemoteCursors(previous => {
+				const current = previous[sourcePeerId];
+				const laserPoints = msg.laser
+					? [...(current?.laserPoints.filter(point => point.expiresAt > now) ?? []), { id: crypto.randomUUID(), x: msg.x, y: msg.y, expiresAt: now + 900 }].slice(-32)
+					: current?.laserPoints ?? [];
+				return { ...previous, [sourcePeerId]: { x: msg.x, y: msg.y, updatedAt: now, laserPoints } };
+			});
+			return;
+		}
+		if (msg.type === 'cursor-leave') {
+			if (!sourcePeerId) return;
+			setRemoteCursors(previous => {
+				if (!(sourcePeerId in previous)) return previous;
+				const next = { ...previous };
+				delete next[sourcePeerId];
+				return next;
+			});
+			return;
+		}
 		if (msg.type === 'room-state-request') {
 			if (isHost) sendRoomStateRef.current();
 			return;
 		}
 		if (msg.type === 'room-state-snapshot') {
 			if (!isHost) applyRoomSnapshot(msg.snapshot);
+			return;
+		}
+		if (msg.type === 'room-state-import') {
+			applyPortableSnapshot(msg.snapshot);
+			setBundleNotice({ kind: 'success', message: 'A participant restored a room bundle.' });
 			return;
 		}
 		if (msg.type === 'view-request') {
@@ -539,6 +680,14 @@ export function Session({ roomCode, isHost }: SessionProps) {
 		}
 		if (msg.type === 'view-suggestion') {
 			setViewSuggestion({ from: msg.id, canvas: msg.canvas });
+			return;
+		}
+		if (msg.type === 'connector-add') {
+			setConnectors(previous => previous.some(connector => connector.id === msg.connector.id) ? previous : [...previous, msg.connector]);
+			return;
+		}
+		if (msg.type === 'connector-remove') {
+			setConnectors(previous => previous.filter(connector => connector.id !== msg.id));
 			return;
 		}
 		// Every message that carries panel geometry carries a z with it
@@ -593,6 +742,8 @@ export function Session({ roomCode, isHost }: SessionProps) {
 					...(msg.url ? { initialUrl: msg.url } : {})
 				}
 			]);
+		} else if (msg.type === 'spawn-image') {
+			setDynamicPanels(prev => [...prev, { id: msg.id, type: 'image', state: denormalisePanel(msg.state) }]);
 		} else if (msg.type === 'spawn-audio') {
 			// Older builds inlined the whole file here; newer ones stream it
 			// separately, so the panel arrives empty and fills in.
@@ -625,6 +776,8 @@ export function Session({ roomCode, isHost }: SessionProps) {
 			setDynamicPanels(prev => [...prev, { id: msg.id, type: 'recorder', state: denormalisePanel(msg.state), recordings: [] }]);
 		} else if (msg.type === 'remove-panel') {
 			setDynamicPanels(prev => prev.filter(p => p.id !== msg.id));
+			setConnectors(prev => prev.filter(connector => connector.fromPanelId !== msg.id && connector.toPanelId !== msg.id));
+			setConnectorStartId(previous => previous === msg.id ? null : previous);
 			// The panel is gone, so any local dock chip pointing at it must go too
 			forgetPanel(msg.id);
 		} else if (msg.type === 'position-tag') {
@@ -677,13 +830,14 @@ export function Session({ roomCode, isHost }: SessionProps) {
 			const done = receiverRef.current.accept(msg.transferId, msg.index, msg.data);
 			if (done) {
 				delete transferPanelRef.current[msg.transferId];
+				if (!done.meta.recordingId) setPanelLabels(prev => ({ ...prev, [done.meta.panelId]: done.file.name }));
 				setDynamicPanels(prev => prev.map(p => {
 					if (p.id !== done.meta.panelId) return p;
 					if (done.meta.recordingId) {
 						if (p.recordings?.some(recording => recording.id === done.meta.recordingId)) return p;
 						return { ...p, recordings: [...(p.recordings ?? []), { id: done.meta.recordingId, name: done.file.name, file: done.file }] };
 					}
-					return { ...p, initialFile: done.file };
+					return { ...p, initialFile: done.file, mediaFileName: done.file.name };
 				}));
 				setTransferProgress(prev => {
 					const next = { ...prev };
@@ -702,6 +856,9 @@ export function Session({ roomCode, isHost }: SessionProps) {
 		} else if (msg.type === 'draw') {
 			whiteboardRef.current?.drawStroke(msg);
 			markWhiteboardDirty();
+		} else if (msg.type === 'draw-shape') {
+			whiteboardRef.current?.drawShape(msg.shape);
+			markWhiteboardDirty();
 		} else if (msg.type === 'draw-text') {
 			whiteboardRef.current?.drawText({ ...msg, kind: 'text', id: msg.id, font: msg.font as TextFont });
 			markWhiteboardDirty();
@@ -713,9 +870,10 @@ export function Session({ roomCode, isHost }: SessionProps) {
 			markWhiteboardDirty();
 		} else if (msg.type === 'draw-clear') {
 			whiteboardRef.current?.clearCanvas();
+			setConnectors([]);
 			markWhiteboardDirty();
 		}
-	}, [applyRoomSnapshot, following, forgetPanel, isHost, markWhiteboardDirty, noteRemoteZ, presentationInvite, presentingId, startPulse]);
+	}, [applyPortableSnapshot, applyRoomSnapshot, following, forgetPanel, isHost, markWhiteboardDirty, noteRemoteZ, presentationInvite, presentingId, startPulse]);
 
 	// We use useYouTubeSync here to route panel-update and whiteboard messages.
 	// YoutubeWidget mounts its own useYouTubeSync instance for YT playback messages.
@@ -789,6 +947,96 @@ export function Session({ roomCode, isHost }: SessionProps) {
 		setPresentationFollowers([]);
 	}, [participantCount]);
 
+	const broadcastCursor = useCallback((clientX: number, clientY: number) => {
+		const now = Date.now();
+		if (now - cursorSendRef.current.lastAt < 40) return;
+		cursorSendRef.current.lastAt = now;
+		const current = canvasStateRef.current;
+		const x = (clientX - current.x) / current.scale;
+		const y = (clientY - current.y) / current.scale;
+		sendSync({ type: 'cursor-move', x, y, laser: laserEnabled });
+		if (laserEnabled) {
+			setLocalLaserPoints(previous => [...previous.filter(point => point.expiresAt > now), { id: crypto.randomUUID(), x, y, expiresAt: now + 900 }].slice(-32));
+		}
+	}, [laserEnabled, sendSync]);
+
+	useEffect(() => {
+		const timer = setInterval(() => {
+			const now = Date.now();
+			setLocalLaserPoints(previous => {
+				const next = previous.filter(point => point.expiresAt > now);
+				return next.length === previous.length ? previous : next;
+			});
+			setRemoteCursors(previous => {
+				let changed = false;
+				const next: Record<string, RemoteCursor> = {};
+				for (const [peerId, cursor] of Object.entries(previous)) {
+					if (now - cursor.updatedAt > 10_000) {
+						changed = true;
+						continue;
+					}
+					const laserPoints = cursor.laserPoints.filter(point => point.expiresAt > now);
+					if (laserPoints.length !== cursor.laserPoints.length) changed = true;
+					next[peerId] = laserPoints === cursor.laserPoints ? cursor : { ...cursor, laserPoints };
+				}
+				return changed ? next : previous;
+			});
+		}, 200);
+		return () => clearInterval(timer);
+	}, []);
+
+	useEffect(() => {
+		const toggleLaser = (event: KeyboardEvent) => {
+			if (event.repeat || event.key.toLowerCase() !== 'l' || (event.target as HTMLElement)?.closest('input, textarea, [contenteditable="true"]')) return;
+			setLaserEnabled(enabled => !enabled);
+		};
+		window.addEventListener('keydown', toggleLaser);
+		return () => window.removeEventListener('keydown', toggleLaser);
+	}, []);
+
+	const exportRoomBundle = useCallback(() => {
+		const current = latestSnapshotRef.current;
+		if (!current) {
+			setBundleNotice({ kind: 'error', message: 'The room is still being prepared. Try exporting again in a moment.' });
+			return;
+		}
+		const snapshot: RoomSnapshot = {
+			...current,
+			savedAt: Date.now(),
+			viewport: { width: window.innerWidth, height: window.innerHeight },
+			canvas: { ...canvasStateRef.current },
+			drawings: whiteboardRef.current?.getItems() ?? current.drawings
+		};
+		const blob = new Blob([serialiseRoomBundle(snapshot)], { type: 'application/json' });
+		const url = URL.createObjectURL(blob);
+		const link = document.createElement('a');
+		link.href = url;
+		link.download = `watchtogether-${roomCode.toLowerCase()}-${new Date().toISOString().slice(0, 10)}.json`;
+		document.body.appendChild(link);
+		link.click();
+		link.remove();
+		setTimeout(() => URL.revokeObjectURL(url), 0);
+		setBundleNotice({ kind: 'success', message: 'Room bundle exported. Media files remain stored only in this browser.' });
+	}, [roomCode]);
+
+	const importRoomBundle = useCallback(async (file: File) => {
+		try {
+			if (file.size > 20 * 1024 * 1024) throw new Error('Room bundles must be smaller than 20 MB.');
+			const snapshot = parseRoomBundle(await file.text());
+			applyPortableSnapshot(snapshot);
+			sendSync({ type: 'room-state-import', snapshot });
+			setBundleNotice({ kind: 'success', message: 'Room restored. Media metadata was imported; media files remain local to their original browser.' });
+		} catch (error) {
+			setBundleNotice({ kind: 'error', message: error instanceof Error ? error.message : 'The room bundle could not be imported.' });
+		}
+	}, [applyPortableSnapshot, sendSync]);
+
+	useEffect(() => {
+		if (!bundleNotice) return;
+		const timer = setTimeout(() => setBundleNotice(null), 7000);
+		return () => clearTimeout(timer);
+	}, [bundleNotice]);
+
 	const sendPanelUpdate = useCallback(
 		(id: string, state: PanelState) => {
 			sendSync({ type: 'panel-update', id, state: normalisePanel(state) });
@@ -799,6 +1047,14 @@ export function Session({ roomCode, isHost }: SessionProps) {
 	const handleWbStroke = useCallback(
 		(stroke: WhiteboardStroke) => {
 			sendSync({ type: 'draw', ...stroke });
+			markWhiteboardDirty();
+		},
+		[markWhiteboardDirty, sendSync]
+	);
+
+	const handleWbShape = useCallback(
+		(shape: WhiteboardShape) => {
+			sendSync({ type: 'draw-shape', shape });
 			markWhiteboardDirty();
 		},
 		[markWhiteboardDirty, sendSync]
@@ -923,6 +1179,8 @@ export function Session({ roomCode, isHost }: SessionProps) {
 
 	const handleWbClear = useCallback(() => {
 		whiteboardRef.current?.clearCanvas();
+		setConnectors([]);
+		setConnectorStartId(null);
 		sendSync({ type: 'draw-clear' });
 		markWhiteboardDirty();
 	}, [markWhiteboardDirty, sendSync]);
@@ -962,6 +1220,10 @@ export function Session({ roomCode, isHost }: SessionProps) {
 	});
 
 	const removePanel = (id: string) => {
+		const attached = connectors.filter(connector => connector.fromPanelId === id || connector.toPanelId === id);
+		setConnectors(prev => prev.filter(connector => connector.fromPanelId !== id && connector.toPanelId !== id));
+		attached.forEach(connector => sendSync({ type: 'connector-remove', id: connector.id }));
+		setConnectorStartId(previous => previous === id ? null : previous);
 		setDynamicPanels(prev => prev.filter(p => p.id !== id));
 		setRecorderStatuses(prev => {
 			if (!(id in prev)) return prev;
@@ -972,6 +1234,36 @@ export function Session({ roomCode, isHost }: SessionProps) {
 		forgetPanel(id);
 		sendSync({ type: 'remove-panel', id });
 	};
+
+	const selectConnectorPanel = useCallback((id: string) => {
+		if (!connectorStartId) {
+			setConnectorStartId(id);
+			return;
+		}
+		if (connectorStartId === id) {
+			setConnectorStartId(null);
+			return;
+		}
+		const connector: PersistedConnector = {
+			id: crypto.randomUUID(),
+			fromPanelId: connectorStartId,
+			toPanelId: id,
+			color: activeColor,
+			width: wbWidth
+		};
+		setConnectors(previous => [...previous, connector]);
+		sendSync({ type: 'connector-add', connector });
+		setConnectorStartId(null);
+	}, [activeColor, connectorStartId, sendSync, wbWidth]);
+
+	const removeConnector = useCallback((id: string) => {
+		setConnectors(previous => previous.filter(connector => connector.id !== id));
+		sendSync({ type: 'connector-remove', id });
+	}, [sendSync]);
+
+	useEffect(() => {
+		if (wbTool !== 'connector') setConnectorStartId(null);
+	}, [wbTool]);
 
 	// The video panels are permanent anchors — you can always get back to a
 	// face. Their chips carry no delete button, and this guard backs that up
@@ -1045,6 +1337,7 @@ export function Session({ roomCode, isHost }: SessionProps) {
 			browser: 760,
 			code: 640,
 			recorder: 720,
+			image: 680,
 			position: 0
 		};
 
@@ -1123,7 +1416,7 @@ export function Session({ roomCode, isHost }: SessionProps) {
 			const firstLine = text.split('\n')[0].trim();
 			if (kind === 'text' && firstLine) return firstLine.slice(0, 40);
 		}
-		const base = panel.type === 'youtube' ? 'YouTube' : panel.type === 'note' ? 'Note' : panel.type === 'browser' ? 'Browser' : panel.type === 'code' ? 'Code' : panel.type === 'recorder' ? 'Recorder' : 'Audio';
+		const base = panel.type === 'youtube' ? 'YouTube' : panel.type === 'note' ? 'Note' : panel.type === 'browser' ? 'Browser' : panel.type === 'code' ? 'Code' : panel.type === 'recorder' ? 'Recorder' : panel.type === 'image' ? 'Image' : 'Audio';
 		const sameType = dynamicPanels.filter(p => p.type === panel.type);
 		if (sameType.length < 2) return base;
 		return `${base} ${sameType.findIndex(p => p.id === panel.id) + 1}`;
@@ -1302,21 +1595,33 @@ export function Session({ roomCode, isHost }: SessionProps) {
 	// Spawn a new dynamic panel at the given screen position (screen coords → world coords).
 	// Pass fromRemote=true when applying a remote-initiated spawn (skips sync to avoid loops).
 	const spawnPanel = (
-		type: 'youtube' | 'audio' | 'browser' | 'note' | 'code' | 'recorder',
+		type: 'youtube' | 'audio' | 'browser' | 'note' | 'code' | 'recorder' | 'image',
 		screenX: number,
 		screenY: number,
-		extra?: { initialVideoId?: string; initialFile?: File; initialUrl?: string; note?: NoteContent; code?: CodeContent },
+		extra?: { initialVideoId?: string; initialFile?: File; initialUrl?: string; note?: NoteContent; code?: CodeContent; dimensions?: { width: number; height: number } },
 		remoteId?: string
 	) => {
 		const { x: tx, y: ty, scale } = canvasStateRef.current;
-		const w = type === 'browser' ? 560 : type === 'recorder' ? 600 : type === 'code' ? 520 : type === 'youtube' ? 320 : type === 'note' ? 300 : 300;
-		const h = type === 'browser' ? 420 : type === 'recorder' ? 480 : type === 'code' ? 380 : type === 'youtube' ? 260 : type === 'note' ? 300 : 360;
+		const imageRatio = extra?.dimensions ? extra.dimensions.width / extra.dimensions.height : 4 / 3;
+		const imageWidth = imageRatio >= 1 ? 520 : Math.max(240, 420 * imageRatio);
+		const imageHeight = (imageRatio >= 1 ? Math.max(180, 520 / imageRatio) : 420) + 32;
+		const w = type === 'image' ? imageWidth : type === 'browser' ? 560 : type === 'recorder' ? 600 : type === 'code' ? 520 : type === 'youtube' ? 320 : type === 'note' ? 300 : 300;
+		const h = type === 'image' ? imageHeight : type === 'browser' ? 420 : type === 'recorder' ? 480 : type === 'code' ? 380 : type === 'youtube' ? 260 : type === 'note' ? 300 : 360;
 		const worldX = (screenX - tx) / scale - w / 2;
 		const worldY = (screenY - ty) / scale - h / 2;
 		const nextZ = ++topZRef.current;
 		const id = remoteId ?? crypto.randomUUID();
 		const state: PanelState = { x: worldX, y: worldY, width: w, height: h, z: nextZ };
-		setDynamicPanels(prev => [...prev, { id, type, state, ...extra }]);
+		const panelExtra: Partial<DynamicPanel> = {
+			initialVideoId: extra?.initialVideoId,
+			initialFile: extra?.initialFile,
+			initialUrl: extra?.initialUrl,
+			note: extra?.note,
+			code: extra?.code
+		};
+		setDynamicPanels(prev => [...prev, { id, type, state, ...panelExtra }]);
+		const imageFile = type === 'image' ? extra?.initialFile : undefined;
+		if (imageFile) setPanelLabels(prev => ({ ...prev, [id]: imageFile.name }));
 		setDockedIds(prev => (prev.includes(id) ? prev : [...prev, id]));
 
 		// Only sync outward for locally-initiated spawns
@@ -1336,7 +1641,23 @@ export function Session({ roomCode, isHost }: SessionProps) {
 				sendSync({ type: 'spawn-code', id, state: normalisePanel(state), code: extra?.code ?? { text: '', language: 'text' } });
 			} else if (type === 'recorder') {
 				sendSync({ type: 'spawn-recorder', id, state: normalisePanel(state) });
+			} else if (type === 'image') {
+				sendSync({ type: 'spawn-image', id, state: normalisePanel(state) });
+				if (extra?.initialFile) sendFileTo(id, extra.initialFile);
 			}
+		}
+	};
+
+	const addImage = async (file: File, screenX: number, screenY: number) => {
+		try {
+			const prepared = await prepareImage(file);
+			spawnPanel('image', screenX, screenY, {
+				initialFile: prepared.file,
+				dimensions: { width: prepared.width, height: prepared.height }
+			});
+			setMediaError(null);
+		} catch (error) {
+			setMediaError(error instanceof Error ? error.message : 'The image could not be added.');
 		}
 	};
 
@@ -1433,14 +1754,9 @@ export function Session({ roomCode, isHost }: SessionProps) {
 
 	// ── Paste onto the canvas ────────────────────────────────────────────────
 	// Whatever is on the clipboard lands where the pointer is, as the nearest
-	// sensible thing: a YouTube link becomes a player, any other link becomes a
-	// browser panel, and plain text becomes canvas text.
-	//
-	// Images are deliberately not handled yet. There is no image support on the
-	// canvas, and pasting a screengrab would hit the same wall the audio drop
-	// already does — the whole file base64'd into a single data-channel message.
-	// That wants the chunked transfer work first, which stickers and image drop
-	// both need too.
+	// sensible thing: an image becomes a compressed panel, a YouTube link becomes
+	// a player, any other link becomes a browser panel, and plain text becomes
+	// canvas text.
 	const pointerRef = useRef({ x: 0, y: 0 });
 	useEffect(() => {
 		const onPointer = (e: PointerEvent) => {
@@ -1451,6 +1767,11 @@ export function Session({ roomCode, isHost }: SessionProps) {
 	}, []);
 
 	useEffect(() => {
+		const { x, y } = pointerRef.current;
+		if (x || y) broadcastCursor(x, y);
+	}, [broadcastCursor, canvas]);
+
+	useEffect(() => {
 		const onPaste = (e: ClipboardEvent) => {
 			if (e.defaultPrevented) return;
 			// Never hijack a paste aimed at a note, the rename box or a URL bar.
@@ -1459,15 +1780,23 @@ export function Session({ roomCode, isHost }: SessionProps) {
 			const el = e.target instanceof Element ? e.target : null;
 			if (el?.closest('input, textarea, [contenteditable="true"]')) return;
 
-			const raw = e.clipboardData?.getData('text')?.trim();
-			if (!raw) return;
-			e.preventDefault();
-
 			// Drop it where the pointer is; fall back to the middle of the screen
 			// when pasted by keyboard without the mouse having moved.
 			const { x, y } = pointerRef.current;
 			const px = x || window.innerWidth / 2;
 			const py = y || window.innerHeight / 2;
+			const image = Array.from(e.clipboardData?.items ?? [])
+				.find(item => item.kind === 'file' && item.type.startsWith('image/'))
+				?.getAsFile();
+			if (image) {
+				e.preventDefault();
+				void addImage(image, px, py);
+				return;
+			}
+
+			const raw = e.clipboardData?.getData('text')?.trim();
+			if (!raw) return;
+			e.preventDefault();
 
 			const videoId = parseYouTubeVideoId(raw);
 			if (videoId) {
@@ -1723,6 +2052,8 @@ export function Session({ roomCode, isHost }: SessionProps) {
 			onMouseMove={handleOuterMouseMove}
 			onMouseUp={handleOuterMouseUp}
 			onMouseLeave={handleOuterMouseUp}
+			onPointerMove={event => broadcastCursor(event.clientX, event.clientY)}
+			onPointerLeave={() => sendSync({ type: 'cursor-leave' })}
 			onContextMenu={e => {
 				if (e.target instanceof HTMLCanvasElement) e.preventDefault();
 			}}
@@ -1741,6 +2072,11 @@ export function Session({ roomCode, isHost }: SessionProps) {
 			onDrop={e => {
 				e.preventDefault();
 				setBgDragOver(false);
+				const image = Array.from(e.dataTransfer.files).find(file => file.type.startsWith('image/'));
+				if (image) {
+					void addImage(image, e.clientX, e.clientY);
+					return;
+				}
 				// Audio file
 				const file = Array.from(e.dataTransfer.files).find(f => f.type.match(/audio\//));
 				if (file) {
@@ -1757,6 +2093,28 @@ export function Session({ roomCode, isHost }: SessionProps) {
 						});
 				}
 			}}>
+			<input
+				ref={imageInputRef}
+				type="file"
+				accept="image/*"
+				className="hidden"
+				onChange={event => {
+					const file = event.target.files?.[0];
+					if (file) void addImage(file, window.innerWidth / 2, window.innerHeight / 2);
+					event.target.value = '';
+				}}
+			/>
+			<input
+				ref={roomBundleInputRef}
+				type="file"
+				accept=".json,application/json"
+				className="hidden"
+				onChange={event => {
+					const file = event.target.files?.[0];
+					if (file) void importRoomBundle(file);
+					event.target.value = '';
+				}}
+			/>
 			{/* Top bar — fixed overlay, not part of draggable canvas */}
 			<div
 				className="absolute top-0 left-0 right-0 z-50 flex items-end justify-between px-2 sm:px-4 bg-zinc-950/90 backdrop-blur-sm border-b border-zinc-800/60"
@@ -1803,10 +2161,27 @@ export function Session({ roomCode, isHost }: SessionProps) {
 						title="Zoom in">
 						+
 					</button>
+					<button
+						onClick={() => setLaserEnabled(enabled => !enabled)}
+						className={`ml-1 flex h-7 items-center gap-1 rounded border px-1.5 text-xs transition-colors ${laserEnabled ? 'border-rose-400 bg-rose-500/20 text-rose-300' : 'border-zinc-700 text-zinc-400 hover:bg-zinc-700 hover:text-white'}`}
+						title={laserEnabled ? 'Turn off laser pointer (L)' : 'Turn on laser pointer (L)'}
+						aria-pressed={laserEnabled}>
+						<span className={`h-2 w-2 rounded-full ${laserEnabled ? 'animate-pulse bg-rose-400 shadow-[0_0_8px_#fb7185]' : 'bg-zinc-500'}`} />
+						<span className="hidden lg:inline">Laser</span>
+					</button>
 				</div>
 
 				{/* Add media buttons (desktop) */}
 				<div className="hidden sm:flex items-center gap-1.5 shrink-0">
+					<button
+						onClick={() => imageInputRef.current?.click()}
+						className="flex items-center gap-1 sm:gap-1.5 bg-zinc-800 hover:bg-zinc-700 active:bg-zinc-600 border border-zinc-700 text-zinc-300 text-xs font-medium px-2 sm:px-3 py-1.5 rounded-lg transition-colors"
+						title="Add an image">
+						<svg className="h-3.5 w-3.5 shrink-0 text-fuchsia-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+							<rect x="3" y="4" width="18" height="16" rx="2" /><circle cx="8.5" cy="9" r="1.5" /><path strokeLinecap="round" strokeLinejoin="round" d="M4 17l5-5 3.5 3.5 2-2L20 19" />
+						</svg>
+						<span className="hidden sm:inline">Image</span>
+					</button>
 					<button
 						onClick={() => spawnPanel('note', window.innerWidth / 2, window.innerHeight / 2)}
 						className="flex items-center gap-1 sm:gap-1.5 bg-zinc-800 hover:bg-zinc-700 active:bg-zinc-600 border border-zinc-700 text-zinc-300 text-xs font-medium px-2 sm:px-3 py-1.5 rounded-lg transition-colors"
@@ -1877,6 +2252,14 @@ export function Session({ roomCode, isHost }: SessionProps) {
 						<div className="absolute right-0 mt-2 w-40 bg-zinc-900/95 backdrop-blur border border-zinc-700 rounded-xl p-1.5 shadow-xl z-50">
 							<button
 								onClick={() => {
+									imageInputRef.current?.click();
+									setWidgetMenuOpen(false);
+								}}
+								className="w-full text-left px-2.5 py-2 text-xs text-zinc-200 rounded-lg hover:bg-zinc-800 transition-colors">
+								Image
+							</button>
+							<button
+								onClick={() => {
 									spawnPanel('note', window.innerWidth / 2, window.innerHeight / 2);
 									setWidgetMenuOpen(false);
 								}}
@@ -1930,6 +2313,22 @@ export function Session({ roomCode, isHost }: SessionProps) {
 					</svg>
 					<span className="hidden lg:inline">{presentingId ? 'Stop presenting' : 'Present'}</span>
 				</button>
+				<div className="flex shrink-0 items-center gap-1">
+					<button
+						onClick={exportRoomBundle}
+						className="flex h-8 w-8 items-center justify-center rounded-lg border border-zinc-700 bg-zinc-800 text-zinc-400 transition-colors hover:bg-zinc-700 hover:text-white"
+						title="Export room bundle"
+						aria-label="Export room bundle">
+						<svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M12 3v12m0 0l-4-4m4 4l4-4M5 15v4a2 2 0 002 2h10a2 2 0 002-2v-4" /></svg>
+					</button>
+					<button
+						onClick={() => roomBundleInputRef.current?.click()}
+						className="flex h-8 w-8 items-center justify-center rounded-lg border border-zinc-700 bg-zinc-800 text-zinc-400 transition-colors hover:bg-zinc-700 hover:text-white"
+						title="Import room bundle"
+						aria-label="Import room bundle">
+						<svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M12 16V4m0 0L8 8m4-4l4 4M5 9v10a2 2 0 002 2h10a2 2 0 002-2V9" /></svg>
+					</button>
+				</div>
 
 				{/* Anyone in the room can summon, not just whoever opened it — a
 				    room holds four, so a guest may well be the one who wants to
@@ -1969,6 +2368,12 @@ export function Session({ roomCode, isHost }: SessionProps) {
 				</div>
 			)}
 
+			{bundleNotice && (
+				<div role={bundleNotice.kind === 'error' ? 'alert' : 'status'} className={`fixed bottom-24 left-1/2 z-[1002] w-[min(32rem,calc(100vw-1.5rem))] -translate-x-1/2 rounded-xl border px-3 py-2 text-center text-xs shadow-xl backdrop-blur ${bundleNotice.kind === 'error' ? 'border-red-700 bg-red-950/95 text-red-200' : 'border-emerald-700 bg-emerald-950/95 text-emerald-200'}`}>
+					{bundleNotice.message}
+				</div>
+			)}
+
 			{viewSuggestion && (
 				<div className="fixed left-3 top-16 z-[1000] flex items-center gap-2 rounded-xl border border-violet-500/60 bg-zinc-900/95 p-2 shadow-xl backdrop-blur">
 					<button
@@ -1980,6 +2385,11 @@ export function Session({ roomCode, isHost }: SessionProps) {
 						A participant suggested their view — switch
 					</button>
 					<button onClick={() => setViewSuggestion(null)} className="px-1 text-zinc-400 hover:text-white" title="Dismiss" aria-label="Dismiss view suggestion">×</button>
+				</div>
+			)}
+			{wbTool === 'connector' && (
+				<div className="pointer-events-none fixed left-1/2 top-28 z-[999] -translate-x-1/2 rounded-full border border-violet-500/60 bg-zinc-900/95 px-3 py-1.5 text-xs font-medium text-violet-100 shadow-lg">
+					{connectorStartId ? 'Select another panel to connect · select the first again to cancel' : 'Select the first panel to connect'}
 				</div>
 			)}
 
@@ -2049,7 +2459,9 @@ export function Session({ roomCode, isHost }: SessionProps) {
 				nib={wbNib}
 				font={wbFont}
 				textSize={wbTextSize}
+				shapeKind={wbShapeKind}
 				onStroke={handleWbStroke}
+				onShape={handleWbShape}
 				onText={handleWbText}
 				onTextEdit={handleWbTextEdit}
 				onTextMove={handleWbTextMove}
@@ -2065,8 +2477,10 @@ export function Session({ roomCode, isHost }: SessionProps) {
 				nib={wbNib}
 				font={wbFont}
 				textSize={wbTextSize}
+				shapeKind={wbShapeKind}
 				onFontChange={setWbFont}
 				onTextSizeChange={setWbTextSize}
+				onShapeKindChange={setWbShapeKind}
 				onToolChange={setWbTool}
 				onColorChange={setActiveColor}
 				onWidthChange={setWbWidth}
@@ -2104,6 +2518,59 @@ export function Session({ roomCode, isHost }: SessionProps) {
 					// its children. Let those empty areas reach the whiteboard.
 					pointerEvents: 'none'
 				}}>
+				<svg className="absolute inset-0 z-[4] overflow-visible" width="100%" height="100%" aria-hidden="true">
+					{connectors.map(connector => {
+						const from = dynamicPanels.find(panel => panel.id === connector.fromPanelId)?.state;
+						const to = dynamicPanels.find(panel => panel.id === connector.toPanelId)?.state;
+						if (!from || !to) return null;
+						const start = panelAnchor(from, to);
+						const end = panelAnchor(to, from);
+						return <g key={connector.id}>
+							<line x1={start.x} y1={start.y} x2={end.x} y2={end.y} stroke="#18181b" strokeWidth={connector.width + 4} strokeLinecap="round" />
+							<line x1={start.x} y1={start.y} x2={end.x} y2={end.y} stroke={connector.color} strokeWidth={connector.width} strokeLinecap="round" />
+							<circle cx={start.x} cy={start.y} r={Math.max(4, connector.width)} fill={connector.color} stroke="#18181b" strokeWidth="2" />
+							<circle cx={end.x} cy={end.y} r={Math.max(4, connector.width)} fill={connector.color} stroke="#18181b" strokeWidth="2" />
+						</g>;
+					})}
+				</svg>
+				{wbTool === 'connector' && connectors.map(connector => {
+					const from = dynamicPanels.find(panel => panel.id === connector.fromPanelId)?.state;
+					const to = dynamicPanels.find(panel => panel.id === connector.toPanelId)?.state;
+					if (!from || !to) return null;
+					const start = panelAnchor(from, to);
+					const end = panelAnchor(to, from);
+					return <button key={`remove:${connector.id}`} type="button" onClick={() => removeConnector(connector.id)} aria-label="Remove connector" title="Remove connector" className="absolute z-[997] flex h-6 w-6 items-center justify-center rounded-full border border-zinc-600 bg-zinc-900 text-sm text-zinc-300 shadow hover:border-red-500 hover:text-red-300" style={{ left: (start.x + end.x) / 2, top: (start.y + end.y) / 2, pointerEvents: 'auto', transform: `translate(-50%, -50%) scale(${1 / canvas.scale})` }}>×</button>;
+				})}
+				{localLaserPoints.map(point => (
+					<span
+						key={point.id}
+						className="laser-trail-point absolute z-[995] h-3 w-3 rounded-full bg-rose-400 shadow-[0_0_12px_4px_rgba(251,113,133,0.8)]"
+						style={{ left: point.x, top: point.y, transform: `translate(-50%, -50%) scale(${1 / canvas.scale})` }}
+					/>
+				))}
+				{Object.entries(remoteCursors).flatMap(([peerId, cursor]) => {
+					const colour = cursorColour(peerId);
+					const remoteIndex = remoteStreams.findIndex(remote => remote.peerId === peerId);
+					const label = customLabels[remotePanelId(peerId)] ?? (remoteIndex >= 0 ? `Guest ${remoteIndex + 1}` : `Participant ${peerId.slice(-4)}`);
+					return [
+						...cursor.laserPoints.map(point => (
+							<span
+								key={point.id}
+								className="laser-trail-point absolute z-[995] h-3 w-3 rounded-full"
+								style={{ left: point.x, top: point.y, backgroundColor: colour, boxShadow: `0 0 12px 4px ${colour}cc`, transform: `translate(-50%, -50%) scale(${1 / canvas.scale})` }}
+							/>
+						)),
+						<div
+							key={`cursor:${peerId}`}
+							className="absolute z-[996]"
+							style={{ left: cursor.x, top: cursor.y, transform: `scale(${1 / canvas.scale})`, transformOrigin: 'top left' }}>
+							<svg className="h-6 w-5 drop-shadow-md" viewBox="0 0 20 24" aria-hidden="true">
+								<path d="M2 1.5v18l4.8-4.7 3.2 7.2 3.2-1.5-3.1-7H17z" fill={colour} stroke="#18181b" strokeWidth="1.4" strokeLinejoin="round" />
+							</svg>
+							<span className="absolute left-4 top-4 max-w-32 whitespace-nowrap rounded-md px-1.5 py-0.5 text-[11px] font-semibold text-zinc-950 shadow-lg" style={{ backgroundColor: colour }}>{label}</span>
+						</div>
+					];
+				})}
 				{positionTags.map(tag =>
 					tag.w && tag.h ? (
 						<div
@@ -2175,8 +2642,8 @@ export function Session({ roomCode, isHost }: SessionProps) {
 						state={panel.state}
 						{...makeDynamicPanelHandlers(panel.id)}
 						onToggleDock={() => toggleDock(panel.id)}
-						minWidth={panel.type === 'browser' ? 360 : panel.type === 'recorder' ? 420 : panel.type === 'code' ? 380 : panel.type === 'youtube' ? 280 : 260}
-						minHeight={panel.type === 'browser' ? 240 : panel.type === 'audio' ? 300 : 60}
+						minWidth={panel.type === 'browser' ? 360 : panel.type === 'recorder' ? 420 : panel.type === 'code' ? 380 : panel.type === 'youtube' ? 280 : panel.type === 'image' ? 180 : 260}
+						minHeight={panel.type === 'browser' ? 240 : panel.type === 'audio' ? 300 : panel.type === 'image' ? 140 : 60}
 						scale={canvas.scale}>
 						{zoomTagHandle(panel.id, panelLabels[panel.id] ?? fallbackLabel(panel))}
 						{panel.type === 'note' ? (
@@ -2230,6 +2697,15 @@ export function Session({ roomCode, isHost }: SessionProps) {
 								docked={dockedIds.includes(panel.id)}
 								onToggleDock={() => toggleDock(panel.id)}
 							/>
+						) : panel.type === 'image' ? (
+							<ImageWidget
+								file={panel.initialFile}
+								title={customLabels[panel.id] ?? panelLabels[panel.id] ?? panel.initialFile?.name ?? fallbackLabel(panel)}
+								transferProgress={transferProgress[panel.id]}
+								onClose={() => removePanel(panel.id)}
+								docked={dockedIds.includes(panel.id)}
+								onToggleDock={() => toggleDock(panel.id)}
+							/>
 						) : panel.type === 'audio' ? (
 							<AudioPlayer
 								title={customLabels[panel.id] ?? panelLabels[panel.id] ?? fallbackLabel(panel)}
@@ -2263,6 +2739,16 @@ export function Session({ roomCode, isHost }: SessionProps) {
 							/>
 						)}
 					</DraggablePanel>
+				))}
+				{wbTool === 'connector' && dynamicPanels.map(panel => (
+					<button
+						key={`connector-target:${panel.id}`}
+						type="button"
+						onClick={() => selectConnectorPanel(panel.id)}
+						aria-label={`${connectorStartId ? 'Connect to' : 'Start connector from'} ${panelLabels[panel.id] ?? fallbackLabel(panel)}`}
+						className={`absolute rounded-xl border-2 transition-colors ${connectorStartId === panel.id ? 'border-violet-300 bg-violet-400/20' : 'border-violet-500/70 bg-violet-500/5 hover:bg-violet-500/20'}`}
+						style={{ left: panel.state.x, top: panel.state.y, width: panel.state.width, height: panel.state.height, zIndex: 10000 + panel.state.z, pointerEvents: 'auto' }}
+					/>
 				))}
 			</div>
 

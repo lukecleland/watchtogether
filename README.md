@@ -13,6 +13,7 @@ between participants over WebRTC; PeerJS Cloud is used for signalling.
 
 - Up to four participants in a full peer-to-peer mesh
 - Camera and microphone video panels for each participant
+- Local microphone mute and camera on/off controls without leaving the room
 - Data-only participation when camera or microphone access is denied or
   unavailable
 - Automatic reconnection and room-owner handover when the original host leaves
@@ -27,10 +28,13 @@ between participants over WebRTC; PeerJS Cloud is used for signalling.
 - Ballpoint, pencil, fountain pen, charcoal, highlighter, neon and eraser tools
 - Adjustable colour, width and nib-specific rendering, including metallic inks
 - Place and re-edit free text directly on the canvas
+- Draw rectangles, ellipses, straight lines and arrows, with Shift-constrained proportions and angles
+- Connect shared panels with attached lines that follow them as they move or resize
 - Clear the shared whiteboard
 - Resolution-independent coordinates so content maps between different screen
   sizes
 - Mouse, touch and mobile Safari interaction support
+- Automatic local snapshots of drawings, widgets, layout, connectors and navigation
 
 ### Shared widgets
 
@@ -45,6 +49,8 @@ between participants over WebRTC; PeerJS Cloud is used for signalling.
   supported languages collaboratively
 - **Screen recorder** — capture a screen or window locally, share the resulting
   clip with the room and synchronize its playback
+- **Images and screenshots** — paste, drop or upload an image into a shared,
+  resizable panel; large files are resized and compressed before transfer
 - **Video panels** — one independently movable panel per participant
 
 Widgets can be dragged from their non-interactive surfaces, resized from every
@@ -56,12 +62,19 @@ click.
 - A shared dock acts as a set of bookmarks into the canvas
 - Tag, rename, remove and jump to panels without relocating them
 - Ping a dock entry to draw the other participants' attention
+- See named, colour-coded participant cursors and toggle a fading laser trail
+- Double-click a participant in the dock to request their current viewport, or
+  offer yours; applying a suggested view always requires explicit acceptance
 - Hold the canvas to create a position flag with a ripple
 - Select and tag an area, then return to it with a framed zoom
 - Invite the room to follow your viewport in an opt-in presentation mode;
   followers can leave at any time
-- Paste plain text, YouTube links and other URLs directly onto the canvas
-- Drop audio files and transfer them to peers in chunks with progress feedback
+- Paste images, plain text, YouTube links and other URLs directly onto the canvas
+- Drop image and audio files and transfer them to peers in chunks with progress feedback
+- Export the shared workspace as a portable JSON bundle and import it later;
+  media filenames and playback metadata are included, but media bytes remain local
+- Late joiners and reconnecting participants receive the current room snapshot
+  and available media from the host over the P2P connection
 - Summon a participant via Message, WhatsApp, Email or a copied link — uses the native share sheet on mobile
 
 ### Session continuity
@@ -74,9 +87,10 @@ click.
 
 ## Important current limitations
 
-- **Persistence is local to each browser.** There is no application database.
-  A saved room is not available on a new device unless someone with the room
-  state is present to hydrate it, and clearing site data removes the local copy.
+- **Persistence is browser-local.** Room snapshots are stored in `localStorage`
+  and media files in IndexedDB. There is no shared application database, so a
+  room cannot be recovered on a different browser unless a participant imports
+  a previously exported bundle; bundle files contain media metadata, not bytes.
 - **TURN is optional but operationally important.** Direct WebRTC can fail
   between cellular devices, strict NATs and restrictive corporate networks
   unless a TURN relay is configured.
@@ -90,8 +104,8 @@ click.
   tap before remote audio can play, and autoplay restrictions can delay a
   remotely triggered player.
 
-See [ROADMAP.md](ROADMAP.md) for cloud persistence, music mode, shapes, images,
-live screen sharing and other feature candidates.
+See [ROADMAP.md](ROADMAP.md) for cloud persistence, music mode, live screen
+sharing and other feature candidates.
 
 ## Connection model
 
@@ -121,12 +135,13 @@ The WebRTC data channel carries typed messages for:
 
 - Panel creation, movement, resizing, stacking and removal
 - YouTube, audio and browser state
-- Whiteboard strokes, text and clearing
-- Sticky-note updates
+- Whiteboard strokes, shapes, text, connectors and clearing
+- Sticky-note and code-editor updates
 - Dock tags, labels and pings
 - Position and bounded-area tags
-- Chunked audio-file transfers
-- Room snapshots for late joiners
+- Room snapshots, imports, viewport handoffs and presentation-mode updates
+- Ephemeral participant cursor and laser-pointer positions
+- Chunked image, audio-file and recording transfers
 - Collaborative code and synchronized recording playback
 
 Panel geometry and canvas coordinates are normalized before transmission so
@@ -184,20 +199,21 @@ TURN credentials when the provider supports them.
 
 ## Persistence
 
-The application currently uses `localStorage` for room snapshots and IndexedDB
-for media. Live collaboration remains peer-to-peer, and the host sends its
-current snapshot to participants who join an active room.
+Rooms are currently persisted only in the browser that used them. A versioned
+snapshot in `localStorage` holds the board and layout, while IndexedDB holds
+local image, audio and recorder files. The host also uses that snapshot format
+to hydrate late joiners and room-bundle imports.
 
-Cloud persistence is not currently wired into the application. Adding it will
-require:
+Supabase is **not currently wired into the application**. Cross-browser,
+account-backed persistence would still require:
 
 - A schema and migrations, normally stored under `supabase/migrations/`
 - Client configuration and public project environment variables
-- A durable version of the existing session snapshot format
 - Authorization and room access policies
-- Hydration on initial join and reconnection
+- Background snapshot writes and database hydration
+- A media-storage policy if files should travel with portable room backups
 
-The intended architecture is for live collaboration to remain P2P while the
+The intended architecture is for live collaboration to remain P2P while a
 database stores durable snapshots in the background.
 
 ## Production deployment
@@ -209,8 +225,8 @@ Production hosting must use HTTPS for camera, microphone and WebRTC browser
 APIs. Configure the TURN environment variables before building because Vite
 injects them at build time.
 
-No application backend is required for the current local-first version, but the
-app still depends on third-party network services such as PeerJS signalling,
+No application backend is required for the current browser-local version, but
+the app still depends on third-party network services such as PeerJS signalling,
 configured STUN/TURN infrastructure, YouTube and any pages opened in the mini
 browser.
 
@@ -221,13 +237,16 @@ src/
 ├── components/
 │   ├── AudioPlayer.tsx        # shared record-player widget
 │   ├── BrowserWidget.tsx      # synchronized iframe browser
+│   ├── CodeWidget.tsx         # shared code editor and formatter
 │   ├── Dock.tsx               # canvas bookmarks and participant shortcuts
 │   ├── DraggablePanel.tsx     # movement, resizing and tag gestures
+│   ├── ImageWidget.tsx        # pasted, dropped and uploaded images
+│   ├── ScreenRecorderWidget.tsx # local display capture and shared playback
 │   ├── StickyNote.tsx         # text, chord and tab notes
 │   ├── SummonButton.tsx       # invite participant via Message, WhatsApp, Email or copied link
 │   ├── VideoGrid.tsx          # side-by-side local and remote video
 │   ├── VideoPanel.tsx         # local and remote video
-│   ├── Whiteboard.tsx         # drawing, text and region selection
+│   ├── Whiteboard.tsx         # drawing, shapes, text and region selection
 │   ├── WhiteboardToolbar.tsx  # canvas tools and properties
 │   └── YoutubeWidget.tsx      # YouTube loading and playback sync
 ├── hooks/
@@ -241,8 +260,12 @@ src/
 │   └── panels.ts
 └── utils/
     ├── brush.ts
+    ├── code.ts
     ├── fileTransfer.ts
+    ├── image.ts
+    ├── roomBundle.ts
     ├── roomCode.ts
+    ├── roomPersistence.ts
     └── wordList.ts
 ```
 
