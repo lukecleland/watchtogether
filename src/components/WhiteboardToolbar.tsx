@@ -8,9 +8,11 @@ import type { ShapeKind } from "./Whiteboard";
  * ## Structure
  * Two pieces instead of one strip:
  *
- * - **Island** — pinned below the top bar, horizontally centred. Holds only
- *   what's always relevant: the tools, the current colour, and clear.
- * - **Properties panel** — anchored left, under the island, and shown only
+ * - **Island** — horizontal below the top bar on compact screens, and a
+ *   left-side vertical rail on desktop. Holds only what's always relevant:
+ *   the tools, the current colour, and clear.
+ * - **Properties panel** — shown below the compact island or beside the desktop
+ *   rail, and only
  *   while a tool with options is selected. Colour and brush size live here.
  *
  * ## Why not a flat strip
@@ -24,8 +26,8 @@ import type { ShapeKind } from "./Whiteboard";
  * ## Placement
  * Fixed rather than draggable. The old bar could be moved but was reset on every
  * reload, and being able to lose your toolbar behind a panel is not a feature.
- * The panel sits *below* the island rather than beside it so the two can never
- * collide on a narrow screen.
+ * The responsive placement keeps the panel below the island on narrow screens
+ * and beside the rail where desktop space allows it.
  *
  * Tool selection and contextual styling are controlled by Session.tsx.
  */
@@ -304,7 +306,7 @@ export function WhiteboardToolbar({
       <div
         ref={islandRef}
         style={{ position: "fixed", zIndex: 999, top: TOP_OFFSET }}
-        className="left-1/2 -translate-x-1/2 flex items-center gap-1 bg-zinc-900/95 backdrop-blur border border-zinc-700 rounded-2xl p-1.5 shadow-xl select-none"
+        className="left-1/2 -translate-x-1/2 flex items-center gap-1 bg-zinc-900/95 backdrop-blur border border-zinc-700 rounded-2xl p-1.5 shadow-xl select-none lg:left-3 lg:translate-x-0 lg:flex-col"
       >
         {toolButton(
           "pointer",
@@ -345,7 +347,7 @@ export function WhiteboardToolbar({
           "M7 7h4v4H7zM13 13h4v4h-4zM10.5 10.5l3 3"
         )}
 
-        <div className="w-px h-6 bg-zinc-700 mx-0.5" />
+        <div className="w-px h-6 bg-zinc-700 mx-0.5 lg:mx-0 lg:my-0.5 lg:h-px lg:w-6" />
 
         <button
           onClick={onClear}
@@ -368,7 +370,7 @@ export function WhiteboardToolbar({
         <div
           ref={panelRef}
           style={{ position: "fixed", zIndex: 999, top: PANEL_OFFSET }}
-          className="left-3 sm:left-4 w-[13.5rem] bg-zinc-900/95 backdrop-blur border border-zinc-700 rounded-2xl p-3 shadow-xl select-none"
+          className="whiteboard-properties left-3 w-[13.5rem] bg-zinc-900/95 backdrop-blur border border-zinc-700 rounded-2xl p-3 shadow-xl select-none"
         >
           {tool === "text" && (
             <>

@@ -1,5 +1,12 @@
 @import "tailwindcss";
 
+@media (min-width: 1024px) {
+  .whiteboard-properties {
+    left: 4.75rem;
+    top: calc(3rem + env(safe-area-inset-top) + 0.5rem) !important;
+  }
+}
+
 html,
 body {
   height: 100%;

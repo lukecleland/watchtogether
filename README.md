@@ -12,7 +12,7 @@ between participants over WebRTC; PeerJS Cloud is used for signalling.
 ### Rooms and video
 
 - Up to four participants in a full peer-to-peer mesh
-- Camera and microphone video panels for each participant
+- Compact portrait camera and microphone panels for each participant
 - Local microphone mute and camera on/off controls without leaving the room
 - Data-only participation when camera or microphone access is denied or
   unavailable
