@@ -18,6 +18,7 @@ between participants over WebRTC; PeerJS Cloud is used for signalling.
 - Automatic reconnection and room-owner handover when the original host leaves
 - Participant video shortcuts kept in the shared dock
 - Participant count and a clear room-full state for a fifth connection
+- Per-participant microphone mute and camera controls
 
 ### Infinite collaborative canvas
 
@@ -40,6 +41,10 @@ between participants over WebRTC; PeerJS Cloud is used for signalling.
 - **Mini browser** — enter a URL and render sites that permit iframe embedding
 - **Sticky notes** — switch between text, guitar chord diagrams and tablature;
   notes can contain multiple chords
+- **Code editor** — write or paste syntax-highlighted snippets and format
+  supported languages collaboratively
+- **Screen recorder** — capture a screen or window locally, share the resulting
+  clip with the room and synchronize its playback
 - **Video panels** — one independently movable panel per participant
 
 Widgets can be dragged from their non-interactive surfaces, resized from every
@@ -53,17 +58,25 @@ click.
 - Ping a dock entry to draw the other participants' attention
 - Hold the canvas to create a position flag with a ripple
 - Select and tag an area, then return to it with a framed zoom
+- Invite the room to follow your viewport in an opt-in presentation mode;
+  followers can leave at any time
 - Paste plain text, YouTube links and other URLs directly onto the canvas
 - Drop audio files and transfer them to peers in chunks with progress feedback
 - Summon a participant via Message, WhatsApp, Email or a copied link — uses the native share sheet on mobile
 
+### Session continuity
+
+- Room layout, drawings, notes, code, dock entries and viewport are saved in
+  the browser and restored when that browser revisits the room
+- Audio files and completed screen recordings are retained locally in IndexedDB
+- A participant joining an active room receives the current room snapshot and
+  transferred media from the host
+
 ## Important current limitations
 
-- **Sessions are ephemeral.** There is no application database and nothing is
-  restored after every participant leaves.
-- **Late join state is not hydrated yet.** A person joining an active room does
-  not receive the existing drawing, notes, widgets or dock state created before
-  they connected.
+- **Persistence is local to each browser.** There is no application database.
+  A saved room is not available on a new device unless someone with the room
+  state is present to hydrate it, and clearing site data removes the local copy.
 - **TURN is optional but operationally important.** Direct WebRTC can fail
   between cellular devices, strict NATs and restrictive corporate networks
   unless a TURN relay is configured.
@@ -76,11 +89,9 @@ click.
 - **Browser media policies still apply.** iOS and other browsers may require a
   tap before remote audio can play, and autoplay restrictions can delay a
   remotely triggered player.
-- Multiple YouTube widgets currently share playback commands; independently
-  controlling several YouTube panels is still roadmap work.
 
-See [ROADMAP.md](ROADMAP.md) for planned persistence, session hydration, music
-mode, mute controls, shapes, images, screen sharing and other open work.
+See [ROADMAP.md](ROADMAP.md) for cloud persistence, music mode, shapes, images,
+live screen sharing and other feature candidates.
 
 ## Connection model
 
@@ -95,8 +106,9 @@ connections required for a full mesh:
 Participant B----- C -----D
 ```
 
-Application messages are broadcast once to every open peer connection. Media
-calls and data channels remain direct between browsers. If the room owner
+Application messages are broadcast across the mesh, with message ids preventing
+duplicates when peers relay them. Media calls and data channels remain direct
+between browsers. If the room owner
 disconnects, the remaining clients elect a replacement owner so the room code
 continues to work while anyone remains connected.
 
@@ -114,6 +126,8 @@ The WebRTC data channel carries typed messages for:
 - Dock tags, labels and pings
 - Position and bounded-area tags
 - Chunked audio-file transfers
+- Room snapshots for late joiners
+- Collaborative code and synchronized recording playback
 
 Panel geometry and canvas coordinates are normalized before transmission so
 participants with different viewport sizes still share the same logical
@@ -168,17 +182,18 @@ Vite embeds `VITE_*` values in the client bundle. Do not place a provider's
 account password or API secret in these variables. Prefer scoped or short-lived
 TURN credentials when the provider supports them.
 
-## Persistence and Supabase
+## Persistence
 
-Supabase is **not currently wired into the application**. A connected Supabase
-project and an empty or generated `supabase/` directory do not make sessions
-persistent by themselves.
+The application currently uses `localStorage` for room snapshots and IndexedDB
+for media. Live collaboration remains peer-to-peer, and the host sends its
+current snapshot to participants who join an active room.
 
-Persistence will require:
+Cloud persistence is not currently wired into the application. Adding it will
+require:
 
 - A schema and migrations, normally stored under `supabase/migrations/`
 - Client configuration and public project environment variables
-- A session snapshot format
+- A durable version of the existing session snapshot format
 - Authorization and room access policies
 - Hydration on initial join and reconnection
 
@@ -194,7 +209,7 @@ Production hosting must use HTTPS for camera, microphone and WebRTC browser
 APIs. Configure the TURN environment variables before building because Vite
 injects them at build time.
 
-No application backend is required for the current ephemeral version, but the
+No application backend is required for the current local-first version, but the
 app still depends on third-party network services such as PeerJS signalling,
 configured STUN/TURN infrastructure, YouTube and any pages opened in the mini
 browser.

@@ -3,6 +3,12 @@
 Working document, not a commitment — the ordering is open and items get rewritten
 as we learn things from building them. Ticked items link to where they landed.
 
+> **Documentation checkpoint (August 2026).** Four-person mesh rooms, local
+> browser persistence, late-join hydration, panel-scoped YouTube playback,
+> microphone/camera controls, collaborative code panels and screen recording
+> are now implemented. Older notes below are retained where they explain design
+> decisions, but their status has been updated.
+
 The guiding principle: **peer-to-peer is the point.** The near-zero latency is
 what makes the app genuinely usable for things like playing guitar together, and
 media streams should stay direct between peers regardless of what else gets
@@ -53,18 +59,13 @@ added. So the work is split:
       higher-bitrate stereo Opus. Browser defaults are tuned for speech and
       actively mangle instruments — noise suppression in particular treats
       sustained notes as noise. Small change, big difference for jam sessions.
-- [ ] **Mute toggles** — mic mute and camera off. There are no such buttons
-      today. Track-level `enabled = false`, so no renegotiation needed.
-- [ ] **Session recording** — recorded locally via `MediaRecorder`, so it stays
-      fully P2P with no server involved. Two tiers:
-      - *Audio-only* (suggested first): mix local + remote audio through Web
-        Audio into one downloadable file. Robust, small, and exactly what a
-        jam session wants.
-      - *Full session video* is harder — the canvas and panels can't be captured
-        from the DOM directly, so the realistic route is tab capture via
-        `getDisplayMedia`, which is clunkier UX.
-      - Either way, the other person should always know: a visible recording
-        indicator on both sides, synced over the data channel.
+- [x] **Mute toggles** — mic mute and camera off, implemented with track-level
+      controls and video-track replacement where needed.
+- [x] **Session recording** — a recorder panel captures a user-selected screen
+      or window locally via `getDisplayMedia()` and `MediaRecorder`. Completed
+      clips transfer directly to peers, persist in local IndexedDB and have
+      synchronized selection and playback. Recording status remains visible at
+      room level.
 
 ### Canvas tools
 
@@ -148,24 +149,15 @@ be added without building a bad UI one good feature at a time.
 From a read-through of the current code — a mix of gaps, quick wins and one
 outright bug.
 
-- [ ] **Fix: multiple YouTube panels cross-sync** — *still open, re-verified 30
-      July 2026: `load`/`play`/`pause`/`seek` in `SyncMessage` carry no id.* — playback messages
-      (`load`/`play`/`pause`/`seek`) carry no panel id, so with two YouTube
-      players open, both react to every message. Panel *layout* messages have
-      ids; playback ones don't. Well-scoped first PR.
+- [x] **Fix: multiple YouTube panels cross-sync** — playback messages now carry
+      the panel id, so independently spawned players ignore one another's
+      commands.
 - [x] **Join without camera** — done. A `getUserMedia` failure now substitutes an
       empty `MediaStream` and joins receive-only rather than showing a blocking
       error screen.
-- [ ] **Late-join / rejoin state handoff (P2P)** — *still the most valuable item
-      on this list, and more so than when it was written.* When a guest connects
-      or reconnects, the host re-sends current state over the data channel. Needs
-      no database, and it builds the "serialise a session" machinery Phase 2 then
-      reuses to hydrate a saved board.
-
-      It now covers six kinds of content, not three: whiteboard strokes, canvas
-      text, spawned panels, the loaded video, dock bookmarks and area tags are
-      all invisible to a late joiner. Join five minutes late and you get a blank
-      canvas and an empty bar.
+- [x] **Late-join / rejoin state handoff (P2P)** — a joining participant requests
+      the host's current snapshot, including drawings, panels, notes, code, dock
+      bookmarks, tags and viewport. Media is transferred separately in chunks.
 - [ ] **Live cursors** — show the other person's cursor on the canvas. Cheap to
       sync, and the natural companion to shared tags: a tag says "this thing
       matters", a cursor says "this bit, right here, right now".
@@ -226,12 +218,14 @@ The motivation: coming back to a board the next day and finding your work still
 there. Media and live sync stay peer-to-peer; the database only holds the
 durable record, written in the background.
 
-- [ ] Database setup (Supabase — free tier is plenty)
-- [ ] Save whiteboard strokes and panel layout per room; hydrate on join
-- [ ] Persist dock bookmarks with the board — named landmarks are exactly the
+- [x] Local browser persistence for room snapshots and media
+- [ ] Optional cloud database setup
+- [x] Save whiteboard strokes and panel layout per room; hydrate on join
+- [x] Persist dock bookmarks with the board — named landmarks are exactly the
       kind of thing you'd expect to still be there tomorrow, and they double as
       a table of contents for a returning session
-- [ ] Rejoin a room from a fresh browser or after a reload
+- [x] Rejoin a room after a reload in the same browser
+- [ ] Rejoin a saved room from a fresh browser when no participant is online
 - [ ] Revisit the landing-page copy — "No data leaves your browser" stops being
       true once boards are saved, and shouldn't quietly become inaccurate
 - [ ] Room access model — guessable codes are a much bigger deal once a code
@@ -241,18 +235,55 @@ durable record, written in the background.
 
 ## Later / bigger jobs
 
-- [ ] **Third participant** — can stay P2P; a three-way mesh is fine on
-      bandwidth. The real cost is code, not infrastructure: `usePeer` and the
-      session state are hardwired to exactly two peers, and the local/remote
-      panel swap only works for two. Beyond four or five people a mesh stops
-      scaling and would need a media server (SFU) — a different project.
+- [x] **Up to four participants** — implemented as a relayed P2P mesh with
+      stable per-peer video panels and a clear room-full state. Going beyond
+      four or five people would make an SFU a more appropriate architecture.
 - [ ] **Text chat panel** — for links and anything else spoken words lose.
-- [ ] **"Follow me" / presenting mode** — a genuine viewport snap, but explicit
-      and mutually opted into: I present, you follow, and either of us can stop.
-      Distinct from shared tags, which invite rather than compel. Only worth
-      building if tagging turns out not to cover the "look at this" need in
-      practice.
-- [ ] **Third participant and the dock** — dock ids are per-panel, so the bar
-      itself generalises to more peers without much thought. The `local`/`remote`
-      id swap does not: it assumes exactly two people. Whatever replaces that
-      swap for N peers has to fix tagging a video panel at the same time.
+- [x] **"Follow me" / presenting mode** — implemented as an explicit invitation:
+      each participant chooses whether to follow, receives live pan and zoom
+      updates after accepting, and retains an always-visible stop control.
+
+---
+
+## New feature candidates
+
+These are suggestions, not commitments. The first three form a sensible next
+sequence: presence, safe editing, then richer canvas content.
+
+### Recommended next
+
+- [ ] **Live cursors and laser pointers** — give each participant a named,
+      coloured cursor plus an optional trail that fades after about a second.
+      Cursor updates should be throttled and never persisted.
+- [ ] **Per-user undo and redo** — undo only the initiating participant's last
+      drawing, text or panel action. This requires stable action ownership and
+      avoids global undo erasing somebody else's work.
+- [ ] **Image and screenshot panels** — accept paste, drag-drop and upload;
+      resize and compress large images before sending them through the existing
+      chunked-transfer path.
+
+### Shared-session tools
+
+- [x] **Follow / presentation mode** — invite participants to follow a
+      presenter's viewport, with explicit acceptance and an always-visible way
+      to stop following.
+- [ ] **Agenda and dock sequence** — order dock landmarks into a session path
+      with previous/next controls for lessons, workshops and reviews.
+- [ ] **Comments on objects and regions** — threaded, resolvable comments with
+      unread indicators attached to panels or bounded canvas tags.
+- [ ] **Shared timer and metronome widgets** — synchronize against a future
+      wall-clock start time so countdowns and beats begin together.
+- [ ] **Live screen-share panel** — publish `getDisplayMedia()` as a participant
+      stream in a movable panel, distinct from capturing a recording.
+
+### Canvas and portability
+
+- [ ] **Shapes and connectors** — rectangles, ellipses, lines, arrows and
+      connectors that remain attached when linked panels move.
+- [ ] **Room templates** — seed layouts for a watch party, pair-programming
+      session, music lesson, study session or workshop.
+- [ ] **Export and import a room bundle** — download a portable snapshot with
+      notes, code, layout and media metadata, then restore it in another browser.
+- [ ] **Room security controls** — multi-word codes first, followed by optional
+      passwords, waiting rooms and host-controlled admission before cloud
+      persistence makes rooms accessible without a live participant.
