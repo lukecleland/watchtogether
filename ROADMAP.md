@@ -44,16 +44,19 @@ added. So the work is split:
       Tagging and renaming sync; **dismissing is deliberately local**, so
       neither person can delete a bookmark out of the other's bar.
 
-- [x] **~~"Snap to my screen"~~ — superseded by shared tags** — the original
+- [x] **One-time viewport handoff** — participant dock entries now support two
+      explicit actions: request another participant's current view, or suggest
+      yours to them. A suggestion is shown as an invitation and never moves the
+      recipient until they accept it.
+- [x] **~~"Snap to my screen"~~ — superseded by shared tags and handoff** — the original
       idea was to push my viewport onto the other person. Tagging turns out to
       be the better answer to the same need: it says *look at this* and pulses
       on their dock, and they travel when they're ready. A hard snap yanks
       someone's camera while they might be mid-brushstroke or mid-sentence,
       which in a shared canvas is closer to grabbing their mouse.
 
-      A true snap is still worth having eventually, but only as an explicit,
-      mutually opted-into **"follow me" / presenting mode** — never the default.
-      Moved to *Later* below.
+      Continuous movement is available separately through the explicit,
+      mutually opted-into **"follow me" / presenting mode** — never by default.
 - [ ] **Music mode** — a toggle that reopens the mic with voice processing
       disabled (echo cancellation, noise suppression and auto-gain all off) plus
       higher-bitrate stereo Opus. Browser defaults are tuned for speech and
@@ -118,16 +121,17 @@ be added without building a bad UI one good feature at a time.
       a note pre-printed with blank staves to handwrite on, which is the cheapest
       of the three and possibly the most useful. ABC notation stays parked.
 
-- [ ] **6 · Shapes** — rectangle, ellipse, line, arrow, with shift-constrain.
-      Arrows especially: pointing at things is the commonest annotation need and
-      freehand arrows always look scrappy.
+- [x] **6 · Shapes and connectors** — rectangle, ellipse, line and arrow tools,
+      with Shift-constrained proportions and angles. Panel connectors store
+      stable widget ids rather than fixed endpoints, so they remain attached
+      through dragging, resizing, zooming, persistence and room handoff.
 
-- [ ] **7 · Images — stickers, drop and paste** — emoji stickers, custom image
-      upload, drag-drop, and ⌘V. **The transfer work this was blocked on is now
-      done** (#15), so this is unblocked: it needs image rendering on the canvas
-      and downscaling before send, not a new transfer mechanism.
+- [x] **7 · Images — upload, drop and paste** — custom image upload, drag-drop
+      and clipboard screenshots now create resizable panels. Large images are
+      bounded and compressed before using the existing chunked-transfer path.
+      Emoji stickers remain a separate future enhancement.
 
-- [ ] **8 · Laser pointer** — a trail that fades after about a second and is
+- [x] **8 · Laser pointer** — a trail that fades after about a second and is
       never stored. For "look, *here*" without permanently marking the board.
       Fully independent of everything else.
 
@@ -158,13 +162,24 @@ outright bug.
 - [x] **Late-join / rejoin state handoff (P2P)** — a joining participant requests
       the host's current snapshot, including drawings, panels, notes, code, dock
       bookmarks, tags and viewport. Media is transferred separately in chunks.
-- [ ] **Live cursors** — show the other person's cursor on the canvas. Cheap to
+- [x] **Live cursors** — show the other person's cursor on the canvas. Cheap to
       sync, and the natural companion to shared tags: a tag says "this thing
       matters", a cursor says "this bit, right here, right now".
-- [ ] **Image drop** — *unblocked by the chunked transfer in #15; needs image
-      rendering on the canvas and downscaling before send.* — drag an image onto the canvas and both sides see it, same
-      mechanism as the existing audio-file drop. Wants a file-size guard: the
-      current base64-in-one-message transfer will struggle on large files.
+- [x] **Late-join / rejoin state handoff (P2P)** — the host sends the current
+      versioned snapshot when a participant joins or reconnects, followed by
+      locally available media through the existing chunked-transfer path.
+- [x] **Local room recovery** — versioned room state is saved in localStorage;
+      audio, images and recorder clips are retained in IndexedDB and reattached
+      when the same browser opens the room again.
+- [x] **Room bundle backup and handoff** — export/import carries drawings,
+      shapes, connectors, notes, code, widgets, layout, dock entries, labels and
+      media metadata. Media bytes intentionally remain local.
+- [x] **Screen-recorder panels** — capture a display with `MediaRecorder`, keep
+      multiple local clips, transfer them in chunks and synchronize selection,
+      play, pause and seek. This is widget-level recording rather than a composed
+      recording of the entire call and canvas.
+- [x] **Image drop** — dropped, pasted and uploaded images are resized when
+      necessary, streamed in chunks and persisted locally with their panel.
 - [ ] **Screen share** — `getDisplayMedia` as an additional panel. Natural fit
       for a watch-together app and stays fully P2P.
 - [ ] **Whiteboard undo** — the only recovery today is clear-everything. The
@@ -194,8 +209,8 @@ Things that came out of using the app rather than from this list.
       (#2, #3, #12). Tagging and renaming are shared; dismissing is local, so
       neither person can clear the other's bar.
 - [x] **Paste onto the canvas** (#14) — text becomes canvas text, a YouTube link
-      becomes a player, any other link becomes a browser panel. Images
-      deliberately excluded until there's image support.
+      becomes a player, any other link becomes a browser panel, and clipboard
+      images or screenshots become image panels.
 - [x] **Chunked file transfer** (#15) — replaces base64-ing a whole file into one
       message. This is the groundwork images, stickers and image paste all need.
       Verified by sha256 on a 12MB file across a real connection.
@@ -220,7 +235,9 @@ durable record, written in the background.
 
 - [x] Local browser persistence for room snapshots and media
 - [ ] Optional cloud database setup
-- [x] Save whiteboard strokes and panel layout per room; hydrate on join
+- [x] Export and import a versioned room bundle containing the shared board,
+      widgets, layout, navigation and media metadata without uploading anything
+- [x] Save whiteboard content, connectors and panel layout per room; hydrate on join
 - [x] Persist dock bookmarks with the board — named landmarks are exactly the
       kind of thing you'd expect to still be there tomorrow, and they double as
       a table of contents for a returning session
@@ -252,13 +269,13 @@ sequence: presence, safe editing, then richer canvas content.
 
 ### Recommended next
 
-- [ ] **Live cursors and laser pointers** — give each participant a named,
+- [x] **Live cursors and laser pointers** — give each participant a named,
       coloured cursor plus an optional trail that fades after about a second.
       Cursor updates should be throttled and never persisted.
 - [ ] **Per-user undo and redo** — undo only the initiating participant's last
       drawing, text or panel action. This requires stable action ownership and
       avoids global undo erasing somebody else's work.
-- [ ] **Image and screenshot panels** — accept paste, drag-drop and upload;
+- [x] **Image and screenshot panels** — accept paste, drag-drop and upload;
       resize and compress large images before sending them through the existing
       chunked-transfer path.
 
@@ -278,11 +295,11 @@ sequence: presence, safe editing, then richer canvas content.
 
 ### Canvas and portability
 
-- [ ] **Shapes and connectors** — rectangles, ellipses, lines, arrows and
+- [x] **Shapes and connectors** — rectangles, ellipses, lines, arrows and
       connectors that remain attached when linked panels move.
 - [ ] **Room templates** — seed layouts for a watch party, pair-programming
       session, music lesson, study session or workshop.
-- [ ] **Export and import a room bundle** — download a portable snapshot with
+- [x] **Export and import a room bundle** — download a portable snapshot with
       notes, code, layout and media metadata, then restore it in another browser.
 - [ ] **Room security controls** — multi-word codes first, followed by optional
       passwords, waiting rooms and host-controlled admission before cloud

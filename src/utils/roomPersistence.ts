@@ -17,13 +17,14 @@ export interface PersistedRecording {
 
 export interface PersistedPanel {
   id: string;
-  type: "youtube" | "audio" | "browser" | "note" | "code" | "recorder";
+  type: "youtube" | "audio" | "browser" | "note" | "code" | "recorder" | "image";
   state: PanelState;
   initialVideoId?: string;
   initialUrl?: string;
   note?: NoteContent;
   code?: CodeContent;
   audioFileName?: string;
+  imageFileName?: string;
   recordings?: PersistedRecording[];
   playback?: PersistedPlayback;
 }
@@ -37,6 +38,14 @@ export interface PersistedPositionTag {
   h?: number;
 }
 
+export interface PersistedConnector {
+  id: string;
+  fromPanelId: string;
+  toPanelId: string;
+  color: string;
+  width: number;
+}
+
 export interface RoomSnapshot {
   version: number;
   savedAt: number;
@@ -47,6 +56,7 @@ export interface RoomSnapshot {
   remotePanels?: Record<string, PanelState>;
   drawings: CanvasItem[];
   positionTags: PersistedPositionTag[];
+  connectors?: PersistedConnector[];
   dockedIds: string[];
   panelLabels: Record<string, string>;
   customLabels: Record<string, string>;

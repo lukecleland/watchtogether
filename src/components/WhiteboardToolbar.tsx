@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { FONT_STACKS, METALS, metalFor, TEXT_SIZES, type Nib, type TextFont } from "../utils/brush";
+import type { ShapeKind } from "./Whiteboard";
 
 /**
  * WhiteboardToolbar — a floating tool island with a contextual properties panel.
@@ -29,7 +30,7 @@ import { FONT_STACKS, METALS, metalFor, TEXT_SIZES, type Nib, type TextFont } fr
  * Tool selection and contextual styling are controlled by Session.tsx.
  */
 
-type Tool = "pointer" | "pen" | "eraser" | "text" | "region";
+type Tool = "pointer" | "pen" | "eraser" | "text" | "region" | "shape" | "connector";
 
 interface WhiteboardToolbarProps {
   tool: Tool;
@@ -38,12 +39,14 @@ interface WhiteboardToolbarProps {
   nib: Nib;
   font: TextFont;
   textSize: number;
+  shapeKind: ShapeKind;
   onToolChange: (t: Tool) => void;
   onColorChange: (c: string) => void;
   onWidthChange: (w: number) => void;
   onNibChange: (n: Nib) => void;
   onFontChange: (f: TextFont) => void;
   onTextSizeChange: (s: number) => void;
+  onShapeKindChange: (shape: ShapeKind) => void;
   onClear: () => void;
 }
 
@@ -187,6 +190,13 @@ const SIZES = [
   { label: "L", value: 16 }
 ];
 
+const SHAPES: Array<{ id: ShapeKind; label: string }> = [
+  { id: "rectangle", label: "Rectangle" },
+  { id: "ellipse", label: "Ellipse" },
+  { id: "line", label: "Line" },
+  { id: "arrow", label: "Arrow" }
+];
+
 /** Below the top bar, allowing for the iOS safe-area inset. */
 const TOP_OFFSET = "calc(3rem + env(safe-area-inset-top) + 0.5rem)";
 const PANEL_OFFSET = "calc(3rem + env(safe-area-inset-top) + 3.5rem)";
@@ -198,12 +208,14 @@ export function WhiteboardToolbar({
   nib,
   font,
   textSize,
+  shapeKind,
   onToolChange,
   onColorChange,
   onWidthChange,
   onNibChange,
   onFontChange,
   onTextSizeChange,
+  onShapeKindChange,
   onClear
 }: WhiteboardToolbarProps) {
   const [panelOpen, setPanelOpen] = useState(false);
@@ -226,7 +238,7 @@ export function WhiteboardToolbar({
     // The region tool has no options — every section of the panel (colour,
     // size) belongs to the drawing tools, so opening it here would show
     // controls that affect nothing.
-    if (t === "pointer" || t === "region") {
+    if (t === "pointer" || t === "region" || t === "connector") {
       onToolChange(t);
       setPanelOpen(false);
       return;
@@ -239,16 +251,18 @@ export function WhiteboardToolbar({
     }
   };
 
+  const hasOptions = (t: Tool) => t !== "pointer" && t !== "region" && t !== "connector";
+
   // A tool button carries its own state rather than delegating it to a second
   // control: the pen shows the colour it will draw with, and the active tool
   // shows a chevron so "tap again for options" is visible rather than folklore.
   const toolButton = (t: Tool, label: string, path: string, swatch = false) => (
     <button
       onClick={() => selectTool(t)}
-      title={tool === t && t !== "pointer" && t !== "region" ? `${label} — tap for options` : label}
+      title={tool === t && hasOptions(t) ? `${label} — tap for options` : label}
       aria-label={label}
       aria-pressed={tool === t}
-      aria-expanded={tool === t && t !== "pointer" && t !== "region" ? panelOpen : undefined}
+      aria-expanded={tool === t && hasOptions(t) ? panelOpen : undefined}
       className={`relative w-9 h-9 flex items-center justify-center rounded-xl transition-colors ${
         tool === t
           ? "bg-violet-600 text-white"
@@ -271,7 +285,7 @@ export function WhiteboardToolbar({
         />
       )}
 
-      {tool === t && t !== "pointer" && t !== "region" && (
+      {tool === t && hasOptions(t) && (
         <svg
           aria-hidden="true"
           className="absolute -bottom-0.5 right-0.5 w-2.5 h-2.5 opacity-80"
@@ -318,6 +332,17 @@ export function WhiteboardToolbar({
           "region",
           "Tag an area",
           "M4 8V6a2 2 0 012-2h2M16 4h2a2 2 0 012 2v2M20 16v2a2 2 0 01-2 2h-2M8 20H6a2 2 0 01-2-2v-2"
+        )}
+        {toolButton(
+          "shape",
+          "Shape tool",
+          "M5 5h14v14H5zM8 16l8-8",
+          true
+        )}
+        {toolButton(
+          "connector",
+          "Connect panels",
+          "M7 7h4v4H7zM13 13h4v4h-4zM10.5 10.5l3 3"
         )}
 
         <div className="w-px h-6 bg-zinc-700 mx-0.5" />
@@ -387,6 +412,20 @@ export function WhiteboardToolbar({
                   </button>
                 ))}
               </div>
+            </>
+          )}
+
+          {tool === "shape" && (
+            <>
+              <p className="text-[11px] uppercase tracking-wide text-zinc-500 mb-2">Shape</p>
+              <div className="grid grid-cols-2 gap-1 mb-3.5">
+                {SHAPES.map(shape => (
+                  <button key={shape.id} onClick={() => onShapeKindChange(shape.id)} aria-pressed={shapeKind === shape.id} className={`rounded-lg px-2 py-1.5 text-xs text-zinc-200 transition-colors ${shapeKind === shape.id ? "bg-zinc-700" : "hover:bg-zinc-800"}`}>
+                    {shape.label}
+                  </button>
+                ))}
+              </div>
+              <p className="mb-3 text-[10px] leading-relaxed text-zinc-500">Hold Shift for squares, circles, and 45° lines.</p>
             </>
           )}
 
