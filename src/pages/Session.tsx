@@ -144,8 +144,10 @@ function panelAnchor(panel: PanelState, toward: PanelState): { x: number; y: num
 // ─────────────────────────────────────────────────────────────────────────
 
 function defaultFixedPanels(): Record<PanelId, PanelState> {
-	const videoW = 420;
-	const videoH = 236;
+	// Participant feeds default to a compact portrait card. They remain freely
+	// resizable, and persisted room geometry still wins when a room is restored.
+	const videoW = 236;
+	const videoH = 420;
 	const topY = 112;
 	return {
 		local: { x: 460, y: topY, width: videoW, height: videoH, z: 10 },
@@ -2171,72 +2173,72 @@ export function Session({ roomCode, isHost }: SessionProps) {
 					</button>
 				</div>
 
-				{/* Add media buttons (desktop) */}
-				<div className="hidden sm:flex items-center gap-1.5 shrink-0">
+				{/* Add media buttons (desktop rail) */}
+				<div className="fixed right-3 z-[999] hidden max-h-[calc(100vh-5rem)] w-32 shrink-0 flex-col items-stretch gap-1.5 overflow-y-auto lg:flex" style={{ top: 'calc(3rem + env(safe-area-inset-top) + 0.75rem)' }}>
 					<button
 						onClick={() => imageInputRef.current?.click()}
-						className="flex items-center gap-1 sm:gap-1.5 bg-zinc-800 hover:bg-zinc-700 active:bg-zinc-600 border border-zinc-700 text-zinc-300 text-xs font-medium px-2 sm:px-3 py-1.5 rounded-lg transition-colors"
+						className="flex w-full items-center gap-1.5 bg-zinc-800 hover:bg-zinc-700 active:bg-zinc-600 border border-zinc-700 text-zinc-300 text-xs font-medium px-3 py-2 rounded-lg transition-colors"
 						title="Add an image">
 						<svg className="h-3.5 w-3.5 shrink-0 text-fuchsia-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
 							<rect x="3" y="4" width="18" height="16" rx="2" /><circle cx="8.5" cy="9" r="1.5" /><path strokeLinecap="round" strokeLinejoin="round" d="M4 17l5-5 3.5 3.5 2-2L20 19" />
 						</svg>
-						<span className="hidden sm:inline">Image</span>
+						<span>Image</span>
 					</button>
 					<button
 						onClick={() => spawnPanel('note', window.innerWidth / 2, window.innerHeight / 2)}
-						className="flex items-center gap-1 sm:gap-1.5 bg-zinc-800 hover:bg-zinc-700 active:bg-zinc-600 border border-zinc-700 text-zinc-300 text-xs font-medium px-2 sm:px-3 py-1.5 rounded-lg transition-colors"
+						className="flex w-full items-center gap-1.5 bg-zinc-800 hover:bg-zinc-700 active:bg-zinc-600 border border-zinc-700 text-zinc-300 text-xs font-medium px-3 py-2 rounded-lg transition-colors"
 						title="Add a sticky note">
 						<svg className="w-3.5 h-3.5 text-amber-300 shrink-0" viewBox="0 0 24 24" fill="currentColor">
 							<path d="M5 3h14a2 2 0 012 2v9l-7 7H5a2 2 0 01-2-2V5a2 2 0 012-2zm9 17.5V15a1 1 0 011-1h5.5L14 20.5z" />
 						</svg>
-						<span className="hidden sm:inline">Note</span>
+						<span>Note</span>
 					</button>
 					<button
 						onClick={() => spawnPanel('code', window.innerWidth / 2, window.innerHeight / 2, { code: { text: '', language: 'text' } })}
-						className="flex items-center gap-1 sm:gap-1.5 bg-zinc-800 hover:bg-zinc-700 active:bg-zinc-600 border border-zinc-700 text-zinc-300 text-xs font-medium px-2 sm:px-3 py-1.5 rounded-lg transition-colors"
+						className="flex w-full items-center gap-1.5 bg-zinc-800 hover:bg-zinc-700 active:bg-zinc-600 border border-zinc-700 text-zinc-300 text-xs font-medium px-3 py-2 rounded-lg transition-colors"
 						title="Add a code editor">
 						<span className="font-mono text-emerald-400">&lt;/&gt;</span>
-						<span className="hidden sm:inline">Code</span>
+						<span>Code</span>
 					</button>
 					<button
 						onClick={() => spawnPanel('recorder', window.innerWidth / 2, window.innerHeight / 2)}
-						className="flex items-center gap-1 sm:gap-1.5 bg-zinc-800 hover:bg-zinc-700 active:bg-zinc-600 border border-zinc-700 text-zinc-300 text-xs font-medium px-2 sm:px-3 py-1.5 rounded-lg transition-colors"
+						className="flex w-full items-center gap-1.5 bg-zinc-800 hover:bg-zinc-700 active:bg-zinc-600 border border-zinc-700 text-zinc-300 text-xs font-medium px-3 py-2 rounded-lg transition-colors"
 						title="Add a screen recorder">
 						<span className="h-3.5 w-3.5 rounded-full border-2 border-red-300 bg-red-500" />
-						<span className="hidden sm:inline">Record</span>
+						<span>Record</span>
 					</button>
 					<button
 						onClick={() => spawnPanel('youtube', window.innerWidth / 2, window.innerHeight / 2)}
-						className="flex items-center gap-1 sm:gap-1.5 bg-zinc-800 hover:bg-zinc-700 active:bg-zinc-600 border border-zinc-700 text-zinc-300 text-xs font-medium px-2 sm:px-3 py-1.5 rounded-lg transition-colors"
+						className="flex w-full items-center gap-1.5 bg-zinc-800 hover:bg-zinc-700 active:bg-zinc-600 border border-zinc-700 text-zinc-300 text-xs font-medium px-3 py-2 rounded-lg transition-colors"
 						title="Add a YouTube player">
 						<svg className="w-3.5 h-3.5 text-red-500 shrink-0" viewBox="0 0 24 24" fill="currentColor">
 							<path d="M23.498 6.186a3.016 3.016 0 00-2.122-2.136C19.505 3.545 12 3.545 12 3.545s-7.505 0-9.377.505A3.017 3.017 0 00.502 6.186C0 8.07 0 12 0 12s0 3.93.502 5.814a3.016 3.016 0 002.122 2.136c1.871.505 9.376.505 9.376.505s7.505 0 9.377-.505a3.015 3.015 0 002.122-2.136C24 15.93 24 12 24 12s0-3.93-.502-5.814zM9.545 15.568V8.432L15.818 12l-6.273 3.568z" />
 						</svg>
-						<span className="hidden sm:inline">YouTube</span>
+						<span>YouTube</span>
 					</button>
 					<button
 						onClick={() => spawnPanel('audio', window.innerWidth / 2, window.innerHeight / 2)}
-						className="flex items-center gap-1 sm:gap-1.5 bg-zinc-800 hover:bg-zinc-700 active:bg-zinc-600 border border-zinc-700 text-zinc-300 text-xs font-medium px-2 sm:px-3 py-1.5 rounded-lg transition-colors"
+						className="flex w-full items-center gap-1.5 bg-zinc-800 hover:bg-zinc-700 active:bg-zinc-600 border border-zinc-700 text-zinc-300 text-xs font-medium px-3 py-2 rounded-lg transition-colors"
 						title="Add an audio player">
 						<svg className="w-3.5 h-3.5 text-violet-400 shrink-0" viewBox="0 0 24 24" fill="currentColor">
 							<path d="M12 3v10.55A4 4 0 1014 17V7h4V3h-6z" />
 						</svg>
-						<span className="hidden sm:inline">Audio</span>
+						<span>Audio</span>
 					</button>
 					<button
 						onClick={() => spawnPanel('browser', window.innerWidth / 2, window.innerHeight / 2)}
-						className="flex items-center gap-1 sm:gap-1.5 bg-zinc-800 hover:bg-zinc-700 active:bg-zinc-600 border border-zinc-700 text-zinc-300 text-xs font-medium px-2 sm:px-3 py-1.5 rounded-lg transition-colors"
+						className="flex w-full items-center gap-1.5 bg-zinc-800 hover:bg-zinc-700 active:bg-zinc-600 border border-zinc-700 text-zinc-300 text-xs font-medium px-3 py-2 rounded-lg transition-colors"
 						title="Add a mini browser">
 						<svg className="w-3.5 h-3.5 text-sky-400 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
 							<rect x="3" y="4" width="18" height="16" rx="2" />
 							<path d="M3 9h18M7 6.5h.01M10 6.5h.01" strokeLinecap="round" />
 						</svg>
-						<span className="hidden sm:inline">Browser</span>
+						<span>Browser</span>
 					</button>
 				</div>
 
-				{/* Add media buttons (mobile hamburger) */}
-				<div ref={widgetMenuRef} className="relative sm:hidden shrink-0">
+				{/* Add media buttons (mobile/tablet hamburger) */}
+				<div ref={widgetMenuRef} className="relative shrink-0 lg:hidden">
 					<button
 						onClick={() => setWidgetMenuOpen(open => !open)}
 						className="w-8 h-8 flex items-center justify-center bg-zinc-800 hover:bg-zinc-700 active:bg-zinc-600 border border-zinc-700 text-zinc-300 rounded-lg transition-colors"
