@@ -180,8 +180,9 @@ outright bug.
       recording of the entire call and canvas.
 - [x] **Image drop** — dropped, pasted and uploaded images are resized when
       necessary, streamed in chunks and persisted locally with their panel.
-- [ ] **Screen share** — `getDisplayMedia` as an additional panel. Natural fit
-      for a watch-together app and stays fully P2P.
+- [ ] **Screen share (live)** — `getDisplayMedia` as an additional live panel,
+      streamed the way video/audio already are. Distinct from the screen
+      *recorder* widget below, which captures to a file rather than streaming.
 - [ ] **Whiteboard undo** — the only recovery today is clear-everything. The
       stroke list is already held in memory, so undo-last-stroke is feasible.
       **Needs a decision first:** on a shared board, does undo remove *your* last
@@ -189,12 +190,24 @@ outright bug.
       — global undo lets one person erase the other's work — but that needs
       per-stroke ownership, which doesn't exist yet.
 - [x] **Reconnect handling** — done. `usePeer` now recovers a dropped connection
-      and re-establishes the room role rather than the status badge going quiet.
+      and re-establishes the room role rather than the status badge going quiet;
+      camera/mic are properly rebuilt rather than left dangling.
 - [x] **Synced audio playback** — done. Audio panels share play / pause / seek
       over the data channel (`audio-play`, `audio-pause`, `audio-seek`).
-- [ ] **Longer room codes** — *still one word from 503, re-verified 30 July.* — currently one word from a 503-word list, which is
-      guessable. Two or three words is cheap to do now and matters much more
-      once boards persist (see Phase 2).
+- [ ] **Longer room codes** — *still one word from 503, re-verified 15 Aug
+      2026 (`src/utils/roomCode.ts` unchanged).* — currently one word from a
+      503-word list, which is guessable. Matters more now than when this was
+      written: Summon (#31) actively encourages sharing the raw link, and
+      boards now persist (see below), so a guessed code reaches saved content,
+      not just an empty live session.
+- [x] **Mute toggles** — done. Local video panel carries mic/camera controls
+      (`microphoneEnabled`, `cameraEnabled`, `toggleMicrophone`, `toggleCamera`
+      in `Session.tsx`), track-level as originally scoped.
+- [x] **TURN server** — done (moved from Infrastructure below). `usePeer.ts`
+      adds a TURN entry to the ICE server list when `VITE_TURN_URLS` /
+      `VITE_TURN_USERNAME` / `VITE_TURN_CREDENTIAL` are set, alongside five STUN
+      servers. Config-only from here — whether a TURN provider is actually
+      configured in the deployed env is outside what the code can confirm.
 - [x] **Sync z-order for spawned panels** — done (#8). Fixing it turned up a
       worse sibling: the two peers' z counters drifted apart, so a panel you
       spawned could land *underneath* one the other person had raised and be
@@ -217,13 +230,39 @@ Things that came out of using the app rather than from this list.
 - [x] **Full-size tag handles when zoomed out** (#17) — below 45% zoom a panel
       header is ~9px tall and untaggable, which left anything untagged
       unreachable. Untagged panels now carry a counter-scaled handle.
-
-### Infrastructure
-
-- [ ] **TURN server** — without one, peers behind strict NATs (a lot of mobile
-      data, some corporate wifi) can't connect at all, and there's no
-      client-side fix. The one reliability gap P2P can't close on its own.
-      Needs a hosted component, so it's a cost decision rather than a code one.
+- [x] **Summon** — invite someone into the room via their own messaging app,
+      no login (#31). `navigator.share` on touch devices, an explicit
+      Message/WhatsApp/Email/copy-link menu on desktop (desktop Safari's own
+      share sheet offers Notes and Reminders, not people).
+- [x] **PWA install icon + manifest** (#29).
+- [x] **Movable canvas text, with synced position** — canvas text (freetype,
+      above) can now be dragged after creation, not just placed once.
+- [x] **Local session persistence + refresh/reload survival** — verified in
+      code 15 Aug 2026 (`roomPersistence.ts`): the whole board (panels,
+      drawings, tags, dock, canvas viewport) is saved to `localStorage` per
+      room code, uploaded audio/recordings to IndexedDB, and restored on
+      reopening the same room in the same browser. This is **local-only** —
+      see the Phase 2 note below for what it doesn't cover.
+- [x] **One-shot view suggestion** — double-click a participant to jump to
+      their current viewport (`view-request`/`view-response`); a
+      **"suggest my view"** action sends a card the other person can accept or
+      dismiss (`view-suggestion`). Verified in code 15 Aug 2026. This is a
+      one-time jump; the separately shipped **"Follow me"** presentation mode
+      provides continuous, explicitly accepted viewport following.
+- [x] **Code widgets** (`CodeWidget.tsx`) — a canvas panel for sharing code,
+      spawned automatically when code is pasted onto the canvas or into a
+      sticky note, with syntax highlighting and formatting for JS/TS/JSON/
+      HTML/CSS/SQL/Python (Python via lazily-loaded Ruff WASM).
+- [x] **Screen recorder widget** (`ScreenRecorderWidget.tsx`) — record/pause/
+      resume/stop with screen + system audio where supported, shared with the
+      peer over the existing chunked transfer, synced playback/scrub, local
+      download. Covers the "session recording" idea below more fully than
+      originally scoped, though it's screen capture rather than a canvas-aware
+      recording.
+- [x] **Mic/camera track lifecycle fix** — turning the camera off now actually
+      releases the physical device instead of just disabling the track.
+- [x] **Mobile widget menu** — a hamburger menu for spawning widgets on small
+      screens, alongside the summon-prompt-vs-tool-island positioning fix.
 
 ---
 
@@ -246,7 +285,8 @@ durable record, written in the background.
 - [ ] Revisit the landing-page copy — "No data leaves your browser" stops being
       true once boards are saved, and shouldn't quietly become inaccurate
 - [ ] Room access model — guessable codes are a much bigger deal once a code
-      opens a *saved* board rather than an empty live session
+      opens a *saved* board rather than an empty live session. See "Longer room
+      codes" above, which is now overdue independent of Phase 2.
 
 ---
 
