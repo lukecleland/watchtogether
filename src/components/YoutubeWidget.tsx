@@ -86,7 +86,6 @@ export function YoutubeWidget({
   const [inputValue, setInputValue] = useState(() =>
     initialVideoId ? watchUrl(initialVideoId) : "",
   );
-  const [minimised, setMinimised] = useState(false);
   const [inputError, setInputError] = useState(false);
 
   // Suppress echoing remote-triggered state changes back to the peer.
@@ -166,7 +165,6 @@ export function YoutubeWidget({
         if (msg.id !== id) return;
         setInputValue(watchUrl(msg.videoId));
         setHasVideo(true);
-        setMinimised(false);
         loadVideo(msg.videoId);
         onVideoChange?.(msg.videoId);
       } else if (msg.type === "play") {
@@ -203,7 +201,6 @@ export function YoutubeWidget({
       return;
     }
     setHasVideo(true);
-    setMinimised(false);
     loadVideo(videoId);
     onVideoChange?.(videoId);
     sendSync({ type: "load", id, videoId });
@@ -216,7 +213,6 @@ export function YoutubeWidget({
       e.preventDefault();
       setInputValue(text);
       setHasVideo(true);
-      setMinimised(false);
       loadVideo(videoId);
       onVideoChange?.(videoId);
       sendSync({ type: "load", id, videoId });
@@ -243,41 +239,6 @@ export function YoutubeWidget({
           {onToggleDock && (
             <DockButton docked={docked} onToggle={onToggleDock} />
           )}
-          <button
-            onClick={() => setMinimised((m) => !m)}
-            className="text-zinc-400 hover:text-white transition-colors"
-            aria-label={minimised ? "Expand" : "Minimise"}
-          >
-            {minimised ? (
-              <svg
-                className="w-4 h-4"
-                fill="none"
-                stroke="currentColor"
-                viewBox="0 0 24 24"
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={2}
-                  d="M4 8h16M4 16h16"
-                />
-              </svg>
-            ) : (
-              <svg
-                className="w-4 h-4"
-                fill="none"
-                stroke="currentColor"
-                viewBox="0 0 24 24"
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={2}
-                  d="M20 12H4"
-                />
-              </svg>
-            )}
-          </button>
           {onClose && (
             <button
               onClick={onClose}
@@ -302,7 +263,7 @@ export function YoutubeWidget({
         </div>
       </div>
 
-      <div className={`relative flex-1 min-h-0 overflow-hidden ${minimised ? "hidden" : ""}`}>
+      <div className="relative flex-1 min-h-0 overflow-hidden">
           {/* The URL control floats over the video instead of taking permanent
               space. Focus keeps it visible while the pointer moves to type. */}
           <div className="no-drag pointer-events-none absolute inset-x-0 top-0 z-10 bg-gradient-to-b from-black/90 to-transparent p-2 pb-6 opacity-0 transition-opacity group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100">
@@ -353,8 +314,7 @@ export function YoutubeWidget({
             </div>
           )}
 
-          {/* Player stays mounted while minimised so its YT.Player instance
-              and playback state survive collapsing the widget. */}
+          {/* The player stays mounted so playback state survives panel animations. */}
           <div
             ref={playerContainerRef}
             className={`absolute inset-0 h-full w-full ${!hasVideo ? "hidden" : ""}`}

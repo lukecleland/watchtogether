@@ -220,6 +220,9 @@ Things that came out of using the app rather than from this list.
       jump, and a **ping** to make a bookmark pulse on the other person's screen
       (#2, #3, #12). Tagging and renaming are shared; dismissing is local, so
       neither person can clear the other's bar.
+- [x] **Minimise to dock** — every widget animates into its dock chip. The first
+      dock click restores a minimised widget in place without moving the canvas;
+      later clicks retain the dock's normal zoom-to-widget behavior.
 - [x] **Paste onto the canvas** (#14) — text becomes canvas text, a YouTube link
       becomes a player, any other link becomes a browser panel, and clipboard
       images or screenshots become image panels.

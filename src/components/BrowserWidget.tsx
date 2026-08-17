@@ -42,14 +42,12 @@ export function BrowserWidget({
   const [inputValue, setInputValue] = useState(initialUrl ?? "");
   const [url, setUrl] = useState(initialUrl ?? "");
   const [inputError, setInputError] = useState(false);
-  const [minimised, setMinimised] = useState(false);
 
   const handleRemoteSync = useCallback(
     (message: SyncMessage) => {
       if (message.type !== "browser-load" || message.id !== id) return;
       setInputValue(message.url);
       setUrl(message.url);
-      setMinimised(false);
       onTitleChange?.(new URL(message.url).hostname);
       onUrlChange?.(message.url);
     },
@@ -63,7 +61,6 @@ export function BrowserWidget({
   const loadUrl = (nextUrl: string) => {
     setInputValue(nextUrl);
     setUrl(nextUrl);
-    setMinimised(false);
     onTitleChange?.(new URL(nextUrl).hostname);
     onUrlChange?.(nextUrl);
     sendSync({ type: "browser-load", id, url: nextUrl });
@@ -92,14 +89,11 @@ export function BrowserWidget({
         </div>
         <div className="flex items-center gap-1">
           {onToggleDock && <DockButton docked={docked} onToggle={onToggleDock} />}
-          <button onClick={() => setMinimised(value => !value)} className="text-zinc-400 hover:text-white" aria-label={minimised ? "Expand" : "Minimise"}>
-            {minimised ? "□" : "−"}
-          </button>
           {onClose && <button onClick={onClose} className="text-zinc-500 hover:text-red-400" aria-label="Close">×</button>}
         </div>
       </div>
 
-      {!minimised && (
+      {(
         <>
           <div className="flex gap-2 px-2 py-2 bg-zinc-900 shrink-0">
             <input

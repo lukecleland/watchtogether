@@ -266,6 +266,7 @@ export function Session({ roomCode, isHost }: SessionProps) {
 	// and renaming are shared with the peer (see `dock-tag` / `dock-rename`);
 	// dismissing is local, so neither person can clear the other's bar.
 	const [dockedIds, setDockedIds] = useState<string[]>(() => savedRoom?.dockedIds ?? []);
+	const [minimizedIds, setMinimizedIds] = useState<string[]>([]);
 	// ── File transfer ────────────────────────────────────────────────────────
 	// Files stream in chunks rather than arriving whole, so a panel can appear
 	// immediately and show how far along its contents are.
@@ -1289,6 +1290,7 @@ export function Session({ roomCode, isHost }: SessionProps) {
 	};
 
 	const removeDockEntry = (id: string) => {
+		if (minimizedIds.includes(id)) return;
 		if (positionTags.some(tag => tag.id === id)) {
 			setPositionTags(prev => prev.filter(tag => tag.id !== id));
 			forgetPanel(id);
@@ -1298,10 +1300,62 @@ export function Session({ roomCode, isHost }: SessionProps) {
 		toggleDock(id);
 	};
 
+	const dockElementFor = (id: string) => document.querySelector<HTMLElement>(`[data-dock-entry="${CSS.escape(id)}"]`);
+	const panelShellFor = (id: string) => document.querySelector<HTMLElement>(`[data-panel-shell="${CSS.escape(id)}"]`);
+	const panelDockOffset = (id: string) => {
+		const panel = panelShellFor(id);
+		const dock = dockElementFor(id);
+		if (!panel || !dock) return null;
+		const panelRect = panel.getBoundingClientRect();
+		const dockRect = dock.getBoundingClientRect();
+		return {
+			panel,
+			x: (dockRect.left + dockRect.width / 2 - panelRect.left - panelRect.width / 2) / canvasStateRef.current.scale,
+			y: (dockRect.top + dockRect.height / 2 - panelRect.top - panelRect.height / 2) / canvasStateRef.current.scale
+		};
+	};
+
+	const minimizePanel = (id: string) => {
+		if (!dockedIds.includes(id)) {
+			sendSync({ type: 'dock-tag', id, ...(customLabels[id] ? { label: customLabels[id] } : {}) });
+			setDockedIds(previous => previous.includes(id) ? previous : [...previous, id]);
+		}
+		requestAnimationFrame(() => requestAnimationFrame(() => {
+			const target = panelDockOffset(id);
+			if (!target) {
+				setMinimizedIds(previous => previous.includes(id) ? previous : [...previous, id]);
+				return;
+			}
+			const animation = target.panel.animate([
+				{ transform: 'translate(0, 0) scale(1)', opacity: 1 },
+				{ transform: `translate(${target.x}px, ${target.y}px) scale(0.05)`, opacity: 0 }
+			], { duration: 300, easing: 'cubic-bezier(0.4, 0, 1, 1)' });
+			void animation.finished.then(() => setMinimizedIds(previous => previous.includes(id) ? previous : [...previous, id]));
+		}));
+	};
+
+	const restorePanel = (id: string) => {
+		const target = panelDockOffset(id);
+		if (!target) {
+			setMinimizedIds(previous => previous.filter(item => item !== id));
+			return;
+		}
+		const animation = target.panel.animate([
+			{ transform: `translate(${target.x}px, ${target.y}px) scale(0.05)`, opacity: 0 },
+			{ transform: 'translate(0, 0) scale(1)', opacity: 1 }
+		], { duration: 340, easing: 'cubic-bezier(0, 0, 0.2, 1)' });
+		setMinimizedIds(previous => previous.filter(item => item !== id));
+		void animation.finished.catch(() => {});
+	};
+
 	// Fly the viewport so the given panel sits in the middle of the screen at a
 	// size that's actually usable for its content. The panel itself never moves
 	// — the dock is navigation, not relocation; only the viewport changes.
 	const jumpToPanel = (id: string) => {
+		if (minimizedIds.includes(id)) {
+			restorePanel(id);
+			return;
+		}
 		// Going there counts as seeing it
 		acknowledgePulse(id);
 		const positionTag = positionTags.find(tag => tag.id === id);
@@ -2601,7 +2655,7 @@ export function Session({ roomCode, isHost }: SessionProps) {
 					)
 				)}
 				{localStream && localStream.getTracks().length > 0 && (
-					<DraggablePanel state={fixedPanels.local} {...makePanelHandlers('local')} onToggleDock={() => toggleDock('local')} minWidth={200} minHeight={120} scale={canvas.scale} className="z-10">
+					<DraggablePanel panelId="local" minimized={minimizedIds.includes('local')} onMinimize={() => minimizePanel('local')} state={fixedPanels.local} {...makePanelHandlers('local')} onToggleDock={() => toggleDock('local')} minWidth={200} minHeight={120} scale={canvas.scale} className="z-10">
 						{zoomTagHandle('local', 'You')}
 						{/* No onToggleDock: participants are permanently docked, so a
 						    bookmark toggle here would be a button that does nothing */}
@@ -2617,6 +2671,9 @@ export function Session({ roomCode, isHost }: SessionProps) {
 					return (
 						<DraggablePanel
 							key={peerId}
+							panelId={panelId}
+							minimized={minimizedIds.includes(panelId)}
+							onMinimize={() => minimizePanel(panelId)}
 							state={state}
 							onLocalUpdate={next => setRemotePanelStates(prev => ({ ...prev, [peerId]: next }))}
 							onSyncUpdate={next => sendPanelUpdate(panelId, next)}
@@ -2644,6 +2701,9 @@ export function Session({ roomCode, isHost }: SessionProps) {
 				{dynamicPanels.map(panel => (
 					<DraggablePanel
 						key={panel.id}
+						panelId={panel.id}
+						minimized={minimizedIds.includes(panel.id)}
+						onMinimize={() => minimizePanel(panel.id)}
 						state={panel.state}
 						excludeFromRecording={panel.type === 'recorder'}
 						{...makeDynamicPanelHandlers(panel.id)}

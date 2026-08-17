@@ -56,7 +56,8 @@ between participants over WebRTC; PeerJS Cloud is used for signalling.
 
 Widgets can be dragged from their non-interactive surfaces, resized from every
 edge or corner, layered consistently across peers and tagged with a double
-click.
+click. Every widget can also be minimised into its dock chip and restored in
+place; restoring never moves or zooms the canvas.
 
 ### Sharing and navigation
 
