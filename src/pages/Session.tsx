@@ -2143,6 +2143,7 @@ export function Session({ roomCode, isHost }: SessionProps) {
 					</span>
 				</div>
 
+				<div className="ml-auto flex min-w-0 items-center justify-end gap-1 sm:gap-2">
 				{/* Zoom controls */}
 				<div className="flex items-center gap-0.5">
 					<button
@@ -2336,6 +2337,7 @@ export function Session({ roomCode, isHost }: SessionProps) {
 				    room holds four, so a guest may well be the one who wants to
 				    pull in the fourth. */}
 				<SummonButton roomCode={roomCode} />
+				</div>
 			</div>
 
 			{/* Nobody here yet — the moment you'd actually want to invite
