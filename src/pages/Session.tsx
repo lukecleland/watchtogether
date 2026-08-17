@@ -2351,7 +2351,7 @@ export function Session({ roomCode, isHost }: SessionProps) {
 			{status === 'waiting' && !summonPromptDismissed && (
 				<div
 					className="absolute left-1/2 -translate-x-1/2 z-50 flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-3 bg-zinc-900/95 backdrop-blur border border-zinc-700 rounded-xl pl-3 sm:pl-4 pr-2 py-2.5 shadow-xl max-w-[calc(100vw-2rem)]"
-					style={{ bottom: 'calc(1rem + env(safe-area-inset-bottom) + 6rem)' }}>
+					style={{ bottom: 'calc(1rem + env(safe-area-inset-bottom) + 4.75rem)' }}>
 					{/* Stacks on a phone: side by side, the sentence squeezes to
 					    four words a line and the card stops being readable. */}
 					<p className="text-xs sm:text-sm text-zinc-300 whitespace-nowrap">

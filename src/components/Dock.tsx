@@ -193,12 +193,10 @@ export function Dock({ entries, onJump, onRemove, onRename, onPing, onParticipan
   // Chips that have just been pinged, so the sender gets confirmation it went
   const [pinged, setPinged] = useState<string[]>([]);
   const pingTimers = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
-  const participantClickTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => {
     const timers = pingTimers.current;
     return () => {
       Object.values(timers).forEach(clearTimeout);
-      if (participantClickTimer.current) clearTimeout(participantClickTimer.current);
     };
   }, []);
 
@@ -287,21 +285,9 @@ export function Dock({ entries, onJump, onRemove, onRename, onPing, onParticipan
             }`}
           >
             <button
-              onClick={() => {
-                if (entry.type !== "local" && entry.type !== "remote") {
-                  onJump(entry.id);
-                  return;
-                }
-                if (participantClickTimer.current) clearTimeout(participantClickTimer.current);
-                participantClickTimer.current = setTimeout(() => {
-                  onJump(entry.id);
-                  participantClickTimer.current = null;
-                }, 220);
-              }}
+              onClick={() => onJump(entry.id)}
               onDoubleClick={() => {
                 if (entry.type === "local" || entry.type === "remote") {
-                  if (participantClickTimer.current) clearTimeout(participantClickTimer.current);
-                  participantClickTimer.current = null;
                   onParticipantDoubleClick(entry);
                 }
               }}
