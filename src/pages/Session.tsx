@@ -1918,9 +1918,9 @@ export function Session({ roomCode, isHost }: SessionProps) {
 	useEffect(() => {
 		const onWheel = (e: WheelEvent) => {
 			e.preventDefault();
-			const factor = e.deltaY < 0 ? 1.08 : 1 / 1.08;
+			const factor = e.deltaY < 0 ? 1.04 : 1 / 1.04;
 			setCanvas(prev => {
-				const s = Math.min(4, prev.scale * factor);
+				const s = Math.max(0.25, Math.min(4, prev.scale * factor));
 				return {
 					x: e.clientX - ((e.clientX - prev.x) / prev.scale) * s,
 					y: e.clientY - ((e.clientY - prev.y) / prev.scale) * s,
@@ -2227,7 +2227,7 @@ export function Session({ roomCode, isHost }: SessionProps) {
 				{/* Zoom controls */}
 				<div className="flex items-center gap-0.5">
 					<button
-						onClick={() => setCanvas(c => ({ ...c, scale: c.scale / 1.25 }))}
+						onClick={() => setCanvas(c => ({ ...c, scale: Math.max(0.25, c.scale / 1.1) }))}
 						className="w-7 h-7 flex items-center justify-center rounded text-zinc-400 hover:text-white hover:bg-zinc-700 transition-colors text-base leading-none"
 						title="Zoom out">
 						−
@@ -2239,7 +2239,7 @@ export function Session({ roomCode, isHost }: SessionProps) {
 						{Math.round(canvas.scale * 100)}%
 					</button>
 					<button
-						onClick={() => setCanvas(c => ({ ...c, scale: Math.min(4, c.scale * 1.25) }))}
+						onClick={() => setCanvas(c => ({ ...c, scale: Math.min(4, c.scale * 1.1) }))}
 						className="w-7 h-7 flex items-center justify-center rounded text-zinc-400 hover:text-white hover:bg-zinc-700 transition-colors text-base leading-none"
 						title="Zoom in">
 						+
