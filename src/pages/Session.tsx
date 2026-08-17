@@ -2143,6 +2143,7 @@ export function Session({ roomCode, isHost }: SessionProps) {
 					</span>
 				</div>
 
+				<div className="ml-auto flex w-fit shrink-0 items-center justify-end gap-1 sm:gap-2 lg:absolute lg:bottom-2 lg:left-auto lg:right-3 lg:ml-0 lg:inline-flex lg:w-max lg:max-w-[calc(100%-1.5rem)]">
 				{/* Zoom controls */}
 				<div className="flex items-center gap-0.5">
 					<button
@@ -2336,6 +2337,7 @@ export function Session({ roomCode, isHost }: SessionProps) {
 				    room holds four, so a guest may well be the one who wants to
 				    pull in the fourth. */}
 				<SummonButton roomCode={roomCode} />
+				</div>
 			</div>
 
 			{/* Nobody here yet — the moment you'd actually want to invite
@@ -2349,7 +2351,7 @@ export function Session({ roomCode, isHost }: SessionProps) {
 			{status === 'waiting' && !summonPromptDismissed && (
 				<div
 					className="absolute left-1/2 -translate-x-1/2 z-50 flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-3 bg-zinc-900/95 backdrop-blur border border-zinc-700 rounded-xl pl-3 sm:pl-4 pr-2 py-2.5 shadow-xl max-w-[calc(100vw-2rem)]"
-					style={{ bottom: 'calc(1rem + env(safe-area-inset-bottom) + 6rem)' }}>
+					style={{ bottom: 'calc(1rem + env(safe-area-inset-bottom) + 4.75rem)' }}>
 					{/* Stacks on a phone: side by side, the sentence squeezes to
 					    four words a line and the card stops being readable. */}
 					<p className="text-xs sm:text-sm text-zinc-300 whitespace-nowrap">
@@ -2686,6 +2688,7 @@ export function Session({ roomCode, isHost }: SessionProps) {
 								title={customLabels[panel.id] ?? panelLabels[panel.id] ?? fallbackLabel(panel)}
 								id={panel.id}
 								dataConnection={dataConnection}
+								participantStreams={[...(localStream ? [localStream] : []), ...remoteStreams.map(item => item.stream)]}
 								recordings={panel.recordings}
 								initialPlayback={panel.playback}
 								onPlaybackChange={playback => updatePanelPlayback(panel.id, playback)}

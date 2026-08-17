@@ -265,7 +265,7 @@ export function WhiteboardToolbar({
       aria-label={label}
       aria-pressed={tool === t}
       aria-expanded={tool === t && hasOptions(t) ? panelOpen : undefined}
-      className={`relative w-9 h-9 flex items-center justify-center rounded-xl transition-colors ${
+      className={`group relative w-9 h-9 flex items-center justify-center rounded-xl transition-colors ${
         tool === t
           ? "bg-violet-600 text-white"
           : "text-zinc-400 hover:text-zinc-100 hover:bg-zinc-700"
@@ -297,6 +297,7 @@ export function WhiteboardToolbar({
           <path d="M7 10l5 5 5-5z" />
         </svg>
       )}
+      <span role="tooltip" className="toolbar-tooltip">{tool === t && hasOptions(t) ? `${label} · tap again for options` : label}</span>
     </button>
   );
 
@@ -353,7 +354,7 @@ export function WhiteboardToolbar({
           onClick={onClear}
           title="Clear canvas"
           aria-label="Clear canvas"
-          className="w-9 h-9 flex items-center justify-center rounded-xl text-zinc-400 hover:text-red-400 hover:bg-zinc-700 transition-colors"
+          className="group relative w-9 h-9 flex items-center justify-center rounded-xl text-zinc-400 hover:text-red-400 hover:bg-zinc-700 transition-colors"
         >
           <svg className="w-[18px] h-[18px]" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
             <path
@@ -362,6 +363,7 @@ export function WhiteboardToolbar({
               d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
             />
           </svg>
+          <span role="tooltip" className="toolbar-tooltip">Clear canvas</span>
         </button>
       </div>
 

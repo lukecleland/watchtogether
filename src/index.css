@@ -7,6 +7,43 @@
   }
 }
 
+.toolbar-tooltip {
+  position: absolute;
+  top: calc(100% + 0.5rem);
+  left: 50%;
+  z-index: 1001;
+  width: max-content;
+  max-width: 12rem;
+  transform: translateX(-50%);
+  pointer-events: none;
+  border: 1px solid rgb(63 63 70);
+  border-radius: 0.5rem;
+  background: rgb(24 24 27 / 0.98);
+  padding: 0.3rem 0.5rem;
+  color: rgb(244 244 245);
+  font-size: 0.6875rem;
+  font-weight: 500;
+  line-height: 1rem;
+  white-space: nowrap;
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 120ms ease, visibility 120ms ease;
+}
+
+.group:hover > .toolbar-tooltip,
+.group:focus-visible > .toolbar-tooltip {
+  opacity: 1;
+  visibility: visible;
+}
+
+@media (min-width: 1024px) {
+  .toolbar-tooltip {
+    top: 50%;
+    left: calc(100% + 0.5rem);
+    transform: translateY(-50%);
+  }
+}
+
 html,
 body {
   height: 100%;
