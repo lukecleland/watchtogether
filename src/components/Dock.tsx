@@ -232,6 +232,7 @@ export function Dock({ entries, onJump, onRemove, onRename, onPing, onParticipan
 
   return (
     <div
+      data-canvas-chrome
       className="fixed left-1/2 -translate-x-1/2 flex items-center gap-1.5 bg-zinc-900/90 backdrop-blur border border-zinc-700 rounded-2xl px-2 py-2 shadow-xl max-w-[calc(100vw-2rem)] overflow-x-auto"
       style={{
         zIndex: 999,

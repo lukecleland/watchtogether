@@ -2119,7 +2119,8 @@ export function Session({ roomCode, isHost }: SessionProps) {
 			/>
 			{/* Top bar — fixed overlay, not part of draggable canvas */}
 			<div
-				className="absolute top-0 left-0 right-0 z-50 flex items-end justify-between px-2 sm:px-4 bg-zinc-950/90 backdrop-blur-sm border-b border-zinc-800/60"
+				data-canvas-chrome
+				className="absolute top-0 left-0 right-0 z-50 flex items-center justify-between px-2 sm:px-4 bg-zinc-950/90 backdrop-blur-sm border-b border-zinc-800/60"
 				style={{
 					paddingTop: 'env(safe-area-inset-top)',
 					paddingBottom: '0.5rem'
@@ -2143,7 +2144,7 @@ export function Session({ roomCode, isHost }: SessionProps) {
 					</span>
 				</div>
 
-				<div className="ml-auto flex w-fit shrink-0 items-center justify-end gap-1 sm:gap-2 lg:absolute lg:bottom-2 lg:left-auto lg:right-3 lg:ml-0 lg:inline-flex lg:w-max lg:max-w-[calc(100%-1.5rem)]">
+				<div className="ml-auto flex w-fit shrink-0 items-center justify-end gap-1 sm:gap-2">
 				{/* Zoom controls */}
 				<div className="flex items-center gap-0.5">
 					<button
@@ -2644,6 +2645,7 @@ export function Session({ roomCode, isHost }: SessionProps) {
 					<DraggablePanel
 						key={panel.id}
 						state={panel.state}
+						excludeFromRecording={panel.type === 'recorder'}
 						{...makeDynamicPanelHandlers(panel.id)}
 						onToggleDock={() => toggleDock(panel.id)}
 						minWidth={panel.type === 'browser' ? 360 : panel.type === 'recorder' ? 420 : panel.type === 'code' ? 380 : panel.type === 'youtube' ? 280 : panel.type === 'image' ? 180 : 260}
@@ -2688,7 +2690,7 @@ export function Session({ roomCode, isHost }: SessionProps) {
 								title={customLabels[panel.id] ?? panelLabels[panel.id] ?? fallbackLabel(panel)}
 								id={panel.id}
 								dataConnection={dataConnection}
-								participantStreams={[...(localStream ? [localStream] : []), ...remoteStreams.map(item => item.stream)]}
+								getCanvasElement={() => containerRef.current}
 								recordings={panel.recordings}
 								initialPlayback={panel.playback}
 								onPlaybackChange={playback => updatePanelPlayback(panel.id, playback)}

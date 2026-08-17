@@ -47,9 +47,9 @@ between participants over WebRTC; PeerJS Cloud is used for signalling.
   notes can contain multiple chords
 - **Code editor** — write or paste syntax-highlighted snippets and format
   supported languages collaboratively
-- **Call and screen recorder** — record a composited grid of the room's existing
-  camera feeds with mixed participant audio without a screen-share prompt, or
-  capture a selected screen/window; share clips and synchronize their playback
+- **Canvas recorder** — record the visible board, drawings, connectors and
+  panels through an in-app compositor without a screen-share prompt; share
+  clips and synchronize their playback
 - **Images and screenshots** — paste, drop or upload an image into a shared,
   resizable panel; large files are resized and compressed before transfer
 - **Video panels** — one independently movable panel per participant
@@ -82,7 +82,7 @@ click.
 
 - Room layout, drawings, notes, code, dock entries and viewport are saved in
   the browser and restored when that browser revisits the room
-- Audio files and completed screen recordings are retained locally in IndexedDB
+- Audio files and completed canvas recordings are retained locally in IndexedDB
 - A participant joining an active room receives the current room snapshot and
   transferred media from the host
 
