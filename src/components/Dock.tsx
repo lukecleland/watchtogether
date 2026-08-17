@@ -158,14 +158,16 @@ function DockIcon({ type }: { type: DockEntry["type"] }) {
 export function DockButton({
   docked,
   onToggle,
+  reserveMinimizeSlot = true,
 }: {
   docked: boolean;
   onToggle: () => void;
+  reserveMinimizeSlot?: boolean;
 }) {
   return (
     <button
       onClick={onToggle}
-      className={`no-drag mr-5 transition-colors ${
+      className={`no-drag transition-colors ${reserveMinimizeSlot ? "mr-5" : ""} ${
         docked ? "text-violet-400 hover:text-violet-300" : "text-zinc-400 hover:text-white"
       }`}
       title={docked ? "Remove from dock" : "Add to dock"}

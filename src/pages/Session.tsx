@@ -2655,11 +2655,11 @@ export function Session({ roomCode, isHost }: SessionProps) {
 					)
 				)}
 				{localStream && localStream.getTracks().length > 0 && (
-					<DraggablePanel panelId="local" minimized={minimizedIds.includes('local')} onMinimize={() => minimizePanel('local')} state={fixedPanels.local} {...makePanelHandlers('local')} onToggleDock={() => toggleDock('local')} minWidth={200} minHeight={120} scale={canvas.scale} className="z-10">
+					<DraggablePanel panelId="local" minimized={minimizedIds.includes('local')} onMinimize={() => minimizePanel('local')} minimizeControlHandled state={fixedPanels.local} {...makePanelHandlers('local')} onToggleDock={() => toggleDock('local')} minWidth={200} minHeight={120} scale={canvas.scale} className="z-10">
 						{zoomTagHandle('local', 'You')}
 						{/* No onToggleDock: participants are permanently docked, so a
 						    bookmark toggle here would be a button that does nothing */}
-						<VideoPanel stream={localStream} label={customLabels.local ?? 'You'} muted docked={dockedIds.includes('local')} localControls microphoneEnabled={microphoneEnabled} cameraEnabled={cameraEnabled} onToggleMicrophone={toggleMicrophone} onToggleCamera={() => void toggleCamera()} />
+						<VideoPanel stream={localStream} label={customLabels.local ?? 'You'} muted docked={dockedIds.includes('local')} localControls microphoneEnabled={microphoneEnabled} cameraEnabled={cameraEnabled} onToggleMicrophone={toggleMicrophone} onToggleCamera={() => void toggleCamera()} onMinimize={() => minimizePanel('local')} />
 					</DraggablePanel>
 				)}
 
@@ -2674,6 +2674,7 @@ export function Session({ roomCode, isHost }: SessionProps) {
 							panelId={panelId}
 							minimized={minimizedIds.includes(panelId)}
 							onMinimize={() => minimizePanel(panelId)}
+							minimizeControlHandled
 							state={state}
 							onLocalUpdate={next => setRemotePanelStates(prev => ({ ...prev, [peerId]: next }))}
 							onSyncUpdate={next => sendPanelUpdate(panelId, next)}
@@ -2693,6 +2694,7 @@ export function Session({ roomCode, isHost }: SessionProps) {
 								stream={stream}
 								label={customLabels[panelId] ?? label}
 								docked={dockedIds.includes(panelId)}
+								onMinimize={() => minimizePanel(panelId)}
 							/>
 						</DraggablePanel>
 					);
@@ -2704,6 +2706,7 @@ export function Session({ roomCode, isHost }: SessionProps) {
 						panelId={panel.id}
 						minimized={minimizedIds.includes(panel.id)}
 						onMinimize={() => minimizePanel(panel.id)}
+						minimizeControlHandled={panel.type === 'youtube' || panel.type === 'code'}
 						state={panel.state}
 						excludeFromRecording={panel.type === 'recorder'}
 						{...makeDynamicPanelHandlers(panel.id)}
@@ -2722,7 +2725,8 @@ export function Session({ roomCode, isHost }: SessionProps) {
 								onToggleDock={() => toggleDock(panel.id)}
 							/>
 						) : panel.type === 'code' ? (
-							<CodeWidget
+								<CodeWidget
+									onMinimize={() => minimizePanel(panel.id)}
 								title={customLabels[panel.id] ?? panelLabels[panel.id] ?? fallbackLabel(panel)}
 								code={panel.code ?? { text: '', language: 'text' }}
 								onChange={next => updateCode(panel.id, next)}
@@ -2732,6 +2736,7 @@ export function Session({ roomCode, isHost }: SessionProps) {
 							/>
 						) : panel.type === 'youtube' ? (
 							<YoutubeWidget
+								onMinimize={() => minimizePanel(panel.id)}
 								title={customLabels[panel.id] ?? panelLabels[panel.id] ?? fallbackLabel(panel)}
 								id={panel.id}
 								dataConnection={dataConnection}

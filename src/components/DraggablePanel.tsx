@@ -49,6 +49,7 @@ interface DraggablePanelProps {
   panelId?: string;
   minimized?: boolean;
   onMinimize?: () => void;
+  minimizeControlHandled?: boolean;
 }
 
 interface ResizeEdges {
@@ -129,6 +130,7 @@ export function DraggablePanel({
   panelId,
   minimized = false,
   onMinimize,
+  minimizeControlHandled = false,
 }: DraggablePanelProps) {
   const nodeRef = useRef<HTMLDivElement>(null);
   // Always-current copy of state so resize closure doesn't go stale
@@ -297,7 +299,7 @@ export function DraggablePanel({
         >
         {children}
 
-        {onMinimize && !minimized && (
+        {onMinimize && !minimized && !minimizeControlHandled && (
           <button
             type="button"
             onClick={onMinimize}

@@ -17,11 +17,12 @@ interface CodeWidgetProps {
 	onClose?: () => void;
 	docked?: boolean;
 	onToggleDock?: () => void;
+	onMinimize?: () => void;
 	embedded?: boolean;
 	title?: string;
 }
 
-export function CodeWidget({ code, onChange, onClose, docked = false, onToggleDock, embedded = false, title = 'Code' }: CodeWidgetProps) {
+export function CodeWidget({ code, onChange, onClose, docked = false, onToggleDock, onMinimize, embedded = false, title = 'Code' }: CodeWidgetProps) {
 	const editorRef = useRef<HTMLTextAreaElement>(null);
 	const highlightRef = useRef<HTMLPreElement>(null);
 	const [isFormatting, setIsFormatting] = useState(false);
@@ -61,7 +62,8 @@ export function CodeWidget({ code, onChange, onClose, docked = false, onToggleDo
 				</select></div>
 				<div className="flex items-center gap-1">
 					<button disabled={!canFormatLanguage(code.language) || !code.text.trim() || isFormatting} title={canFormatLanguage(code.language) ? `Format as ${code.language}` : 'Choose a specific language to format'} className="no-drag rounded px-1.5 py-0.5 text-[11px] hover:bg-zinc-700 disabled:cursor-not-allowed disabled:opacity-40" onClick={() => void runFormatter()}>{isFormatting ? 'Formatting…' : 'Format'}</button>
-					{onToggleDock && <DockButton docked={docked} onToggle={onToggleDock} />}
+					{onToggleDock && <DockButton docked={docked} onToggle={onToggleDock} reserveMinimizeSlot={false} />}
+					{onMinimize && !embedded && <button className="no-drag flex h-5 w-4 items-center justify-center text-base leading-none text-zinc-400 hover:text-white" onClick={onMinimize} title="Minimise to dock" aria-label="Minimise to dock">_</button>}
 					{onClose && <button className="no-drag px-1 text-zinc-400 hover:text-white" onClick={onClose} aria-label="Close code widget">×</button>}
 				</div>
 			</div>
