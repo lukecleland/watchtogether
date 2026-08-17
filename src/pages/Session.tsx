@@ -2143,7 +2143,7 @@ export function Session({ roomCode, isHost }: SessionProps) {
 					</span>
 				</div>
 
-				<div className="ml-auto flex w-fit shrink-0 items-center justify-end gap-1 sm:gap-2 lg:absolute lg:bottom-2 lg:right-3">
+				<div className="ml-auto flex w-fit shrink-0 items-center justify-end gap-1 sm:gap-2 lg:absolute lg:bottom-2 lg:left-auto lg:right-3 lg:ml-0 lg:inline-flex lg:w-max lg:max-w-[calc(100%-1.5rem)]">
 				{/* Zoom controls */}
 				<div className="flex items-center gap-0.5">
 					<button
