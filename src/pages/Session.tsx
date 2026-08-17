@@ -1329,8 +1329,14 @@ export function Session({ roomCode, isHost }: SessionProps) {
 			const animation = target.panel.animate([
 				{ transform: 'translate(0, 0) scale(1)', opacity: 1 },
 				{ transform: `translate(${target.x}px, ${target.y}px) scale(0.05)`, opacity: 0 }
-			], { duration: 300, easing: 'cubic-bezier(0.4, 0, 1, 1)' });
-			void animation.finished.then(() => setMinimizedIds(previous => previous.includes(id) ? previous : [...previous, id]));
+			], { duration: 300, easing: 'cubic-bezier(0.4, 0, 1, 1)', fill: 'forwards' });
+			void animation.finished.then(() => {
+				setMinimizedIds(previous => previous.includes(id) ? previous : [...previous, id]);
+				// Keep the collapsed animation frame visible until React has painted
+				// the panel's persistent hidden state underneath it. Cancelling the
+				// effect immediately causes a one-frame full-size flash.
+				requestAnimationFrame(() => requestAnimationFrame(() => animation.cancel()));
+			}).catch(() => {});
 		}));
 	};
 
