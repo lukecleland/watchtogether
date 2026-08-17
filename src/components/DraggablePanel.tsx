@@ -1,4 +1,4 @@
-import { useRef } from "react";
+import { useEffect, useRef } from "react";
 import Draggable, {
   type DraggableEvent,
   type DraggableData,
@@ -45,6 +45,7 @@ interface DraggablePanelProps {
   scale?: number;
   children: React.ReactNode;
   className?: string;
+  excludeFromRecording?: boolean;
 }
 
 interface ResizeEdges {
@@ -121,11 +122,14 @@ export function DraggablePanel({
   scale = 1,
   children,
   className = "",
+  excludeFromRecording = false,
 }: DraggablePanelProps) {
   const nodeRef = useRef<HTMLDivElement>(null);
   // Always-current copy of state so resize closure doesn't go stale
   const stateRef = useRef(state);
-  stateRef.current = state;
+  useEffect(() => {
+    stateRef.current = state;
+  }, [state]);
 
   // Throttle remote sync to ~20fps during drag/resize to avoid flooding the data channel
   const syncTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -257,6 +261,7 @@ export function DraggablePanel({
       enableUserSelectHack={false}
     >
       <div
+        {...(excludeFromRecording ? { "data-recording-exclude": true } : {})}
         ref={nodeRef}
         style={{
           width: state.width,

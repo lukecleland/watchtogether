@@ -305,6 +305,7 @@ export function WhiteboardToolbar({
     <>
       {/* ── Island ─────────────────────────────────────────────────────── */}
       <div
+        data-canvas-chrome
         ref={islandRef}
         style={{ position: "fixed", zIndex: 999, top: TOP_OFFSET }}
         className="left-1/2 -translate-x-1/2 flex items-center gap-1 bg-zinc-900/95 backdrop-blur border border-zinc-700 rounded-2xl p-1.5 shadow-xl select-none lg:left-3 lg:translate-x-0 lg:flex-col"

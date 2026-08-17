@@ -64,9 +64,8 @@ added. So the work is split:
       sustained notes as noise. Small change, big difference for jam sessions.
 - [x] **Mute toggles** — mic mute and camera off, implemented with track-level
       controls and video-track replacement where needed.
-- [x] **Session recording** — a recorder panel can composite the room's existing
-      camera feeds and mix participant audio without opening the screen-share
-      picker, or capture a user-selected screen/window via `getDisplayMedia()`.
+- [x] **Canvas recording** — a recorder panel composites the visible board,
+      drawings, connectors and panels without opening the screen-share picker.
       Completed clips transfer directly to peers, persist in local IndexedDB and
       have synchronized selection and playback. Recording status remains visible
       at room level.
@@ -175,10 +174,9 @@ outright bug.
 - [x] **Room bundle backup and handoff** — export/import carries drawings,
       shapes, connectors, notes, code, widgets, layout, dock entries, labels and
       media metadata. Media bytes intentionally remain local.
-- [x] **Screen-recorder panels** — capture a display with `MediaRecorder`, keep
+- [x] **Canvas-recorder panels** — capture the composed board with `MediaRecorder`, keep
       multiple local clips, transfer them in chunks and synchronize selection,
-      play, pause and seek. This is widget-level recording rather than a composed
-      recording of the entire call and canvas.
+      play, pause and seek without requesting display-capture permission.
 - [x] **Image drop** — dropped, pasted and uploaded images are resized when
       necessary, streamed in chunks and persisted locally with their panel.
 - [ ] **Screen share (live)** — `getDisplayMedia` as an additional live panel,
@@ -254,12 +252,10 @@ Things that came out of using the app rather than from this list.
       spawned automatically when code is pasted onto the canvas or into a
       sticky note, with syntax highlighting and formatting for JS/TS/JSON/
       HTML/CSS/SQL/Python (Python via lazily-loaded Ruff WASM).
-- [x] **Screen recorder widget** (`ScreenRecorderWidget.tsx`) — record/pause/
-      resume/stop with screen + system audio where supported, shared with the
+- [x] **Canvas recorder widget** (`ScreenRecorderWidget.tsx`) — record/pause/
+      resume/stop the visible canvas composition, shared with the
       peer over the existing chunked transfer, synced playback/scrub, local
-      download. Covers the "session recording" idea below more fully than
-      originally scoped, though it's screen capture rather than a canvas-aware
-      recording.
+      download, and no browser screen-share prompt.
 - [x] **Mic/camera track lifecycle fix** — turning the camera off now actually
       releases the physical device instead of just disabling the track.
 - [x] **Mobile widget menu** — a hamburger menu for spawning widgets on small

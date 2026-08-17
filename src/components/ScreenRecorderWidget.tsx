@@ -23,11 +23,9 @@ interface ScreenRecorderWidgetProps {
   initialPlayback?: PanelPlayback;
   onPlaybackChange?: (playback: PanelPlayback) => void;
   title?: string;
-  /** Existing room camera/microphone streams. Recording these needs no display picker. */
-  participantStreams?: MediaStream[];
+  /** Resolves the live canvas workspace without invoking display capture. */
+  getCanvasElement: () => HTMLElement | null;
 }
-
-type RecordingSource = "call" | "screen";
 
 interface CaptureSession {
   stream: MediaStream;
@@ -48,77 +46,44 @@ function syncedTime(time: number, sentAt?: number): number {
   return sentAt ? time + Math.max(0, Date.now() - sentAt) / 1000 : time;
 }
 
-async function createCallCapture(participantStreams: MediaStream[]): Promise<CaptureSession> {
-  const activeStreams = participantStreams.filter(stream => stream.getTracks().some(track => track.readyState === "live"));
-  if (!activeStreams.length) throw new Error("No active camera or microphone streams are available to record.");
-
+async function createCanvasCapture(target: HTMLElement): Promise<CaptureSession> {
+  const { default: html2canvas } = await import("html2canvas");
   const canvas = document.createElement("canvas");
-  canvas.width = 1280;
-  canvas.height = 720;
+  const bounds = target.getBoundingClientRect();
+  canvas.width = Math.max(1, Math.round(bounds.width));
+  canvas.height = Math.max(1, Math.round(bounds.height));
   const context = canvas.getContext("2d");
-  if (!context || typeof canvas.captureStream !== "function") throw new Error("Call recording is not supported by this browser.");
+  if (!context || typeof canvas.captureStream !== "function") throw new Error("Canvas recording is not supported by this browser.");
 
-  const videos = activeStreams
-    .filter(stream => stream.getVideoTracks().some(track => track.readyState === "live"))
-    .map(stream => {
-      const video = document.createElement("video");
-      video.srcObject = stream;
-      video.muted = true;
-      video.playsInline = true;
-      void video.play().catch(() => {});
-      return video;
-    });
-
-  const audioContext = new AudioContext();
-  const audioDestination = audioContext.createMediaStreamDestination();
-  activeStreams.forEach(stream => {
-    if (!stream.getAudioTracks().some(track => track.readyState === "live")) return;
-    audioContext.createMediaStreamSource(stream).connect(audioDestination);
-  });
-  if (audioContext.state === "suspended") await audioContext.resume();
-
-  let frame = 0;
-  const render = () => {
-    context.fillStyle = "#09090b";
-    context.fillRect(0, 0, canvas.width, canvas.height);
-    if (!videos.length) {
-      context.fillStyle = "#a1a1aa";
-      context.font = "500 28px system-ui, sans-serif";
-      context.textAlign = "center";
-      context.fillText("Audio-only room recording", canvas.width / 2, canvas.height / 2);
-    } else {
-      const columns = videos.length === 1 ? 1 : 2;
-      const rows = Math.ceil(videos.length / columns);
-      const tileWidth = canvas.width / columns;
-      const tileHeight = canvas.height / rows;
-      videos.forEach((video, index) => {
-        if (video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA || !video.videoWidth || !video.videoHeight) return;
-        const tileX = (index % columns) * tileWidth;
-        const tileY = Math.floor(index / columns) * tileHeight;
-        const scale = Math.max(tileWidth / video.videoWidth, tileHeight / video.videoHeight);
-        const sourceWidth = tileWidth / scale;
-        const sourceHeight = tileHeight / scale;
-        const sourceX = (video.videoWidth - sourceWidth) / 2;
-        const sourceY = (video.videoHeight - sourceHeight) / 2;
-        context.drawImage(video, sourceX, sourceY, sourceWidth, sourceHeight, tileX, tileY, tileWidth, tileHeight);
+  let stopped = false;
+  let timer = 0;
+  const render = async () => {
+    if (stopped) return;
+    try {
+      const snapshot = await html2canvas(target, {
+        backgroundColor: "#111111",
+        logging: false,
+        scale: 1,
+        useCORS: true,
+        width: canvas.width,
+        height: canvas.height,
+        ignoreElements: element => element.hasAttribute("data-canvas-chrome") || element.hasAttribute("data-recording-exclude"),
       });
+      context.clearRect(0, 0, canvas.width, canvas.height);
+      context.drawImage(snapshot, 0, 0, canvas.width, canvas.height);
+    } finally {
+      if (!stopped) timer = window.setTimeout(() => void render(), 100);
     }
-    frame = requestAnimationFrame(render);
   };
-  render();
+  await render();
 
   const stream = canvas.captureStream(30);
-  audioDestination.stream.getAudioTracks().forEach(track => stream.addTrack(track));
   return {
     stream,
     cleanup: () => {
-      cancelAnimationFrame(frame);
-      videos.forEach(video => {
-        video.pause();
-        video.srcObject = null;
-      });
+      stopped = true;
+      window.clearTimeout(timer);
       stream.getTracks().forEach(track => track.stop());
-      void audioContext.close();
     },
   };
 }
@@ -135,15 +100,14 @@ export function ScreenRecorderWidget({
   onToggleDock,
   initialPlayback,
   onPlaybackChange,
-  title = "Screen recorder",
-  participantStreams = [],
+  title = "Canvas recorder",
+  getCanvasElement,
 }: ScreenRecorderWidgetProps) {
   const [clips, setClips] = useState<RecordingClip[]>(recordings);
   const [selectedId, setSelectedId] = useState<string | null>(initialPlayback?.recordingId ?? recordings[0]?.id ?? null);
   const [recording, setRecording] = useState(false);
   const [paused, setPaused] = useState(false);
   const [errors, setErrors] = useState<string[]>([]);
-  const [recordingSource, setRecordingSource] = useState<RecordingSource>("call");
   const videoRef = useRef<HTMLVideoElement>(null);
   const recorderRef = useRef<MediaRecorder | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
@@ -263,23 +227,12 @@ export function ScreenRecorderWidget({
     setErrors([]);
     let capture: CaptureSession | null = null;
     try {
-      if (recordingSource === "call") {
-        capture = await createCallCapture(participantStreams);
-      } else {
-        if (!navigator.mediaDevices?.getDisplayMedia) throw new Error("Screen recording is not supported by this browser.");
-        const displayStream = await navigator.mediaDevices.getDisplayMedia({
-          video: { frameRate: { ideal: 30, max: 30 } },
-          audio: true,
-        });
-        capture = {
-          stream: displayStream,
-          cleanup: () => displayStream.getTracks().forEach(track => track.stop()),
-        };
-      }
+      const canvasElement = getCanvasElement();
+      if (!canvasElement) throw new Error("The canvas is not ready to record.");
+      capture = await createCanvasCapture(canvasElement);
       const { stream } = capture;
       streamRef.current = stream;
       captureCleanupRef.current = capture.cleanup;
-      if (stream.getAudioTracks().length === 0) addError(recordingSource === "call" ? "No participant audio is available; the recording will contain video only." : "Audio is not being captured. Your browser or selected source did not provide system audio.");
 
       const mimeType = recordingMimeType();
       const recorder = new MediaRecorder(stream, {
@@ -297,8 +250,7 @@ export function ScreenRecorderWidget({
         const actualType = recorder.mimeType || mimeType || "video/webm";
         const extension = actualType.includes("mp4") ? "mp4" : "webm";
         const number = clips.length + 1;
-        const prefix = recordingSource === "call" ? "Call recording" : "Screen recording";
-        const file = new File(chunksRef.current, `${prefix} ${number}.${extension}`, { type: actualType });
+        const file = new File(chunksRef.current, `Canvas recording ${number}.${extension}`, { type: actualType });
         const clip = { id: crypto.randomUUID(), name: file.name, file };
         setClips(previous => [...previous, clip]);
         setSelectedId(clip.id);
@@ -310,7 +262,6 @@ export function ScreenRecorderWidget({
         setRecording(false);
         setPaused(false);
       };
-      if (recordingSource === "screen") stream.getVideoTracks()[0]?.addEventListener("ended", stopCapture, { once: true });
       const video = videoRef.current;
       if (video) {
         video.removeAttribute("src");
@@ -351,7 +302,7 @@ export function ScreenRecorderWidget({
   };
 
   return (
-    <div className="flex h-full min-h-0 flex-col overflow-hidden rounded-xl border border-zinc-700 bg-zinc-950 shadow-xl">
+    <div data-recording-exclude className="flex h-full min-h-0 flex-col overflow-hidden rounded-xl border border-zinc-700 bg-zinc-950 shadow-xl">
       <div className="drag-handle flex shrink-0 cursor-grab items-center justify-between bg-zinc-900 px-3 py-2 active:cursor-grabbing">
         <div className="flex items-center gap-2 text-xs font-semibold text-zinc-300">
           <span className={`h-3 w-3 rounded-full ${recording && !paused ? "animate-pulse bg-red-500" : "bg-zinc-600"}`} />
@@ -382,16 +333,11 @@ export function ScreenRecorderWidget({
           }}
           className="h-full w-full bg-black object-contain"
         />
-        {!recording && !selected && <div className="pointer-events-none absolute inset-0 flex items-center justify-center px-4 text-center text-xs text-zinc-600">Record the call without a prompt, or choose screen capture</div>}
-      </div>
-
-      <div className="no-drag flex shrink-0 gap-1 border-t border-zinc-800 bg-zinc-950 px-3 pt-2">
-        <button onClick={() => setRecordingSource("call")} disabled={recording} aria-pressed={recordingSource === "call"} className={`rounded-md px-2 py-1 text-[11px] font-medium transition-colors disabled:opacity-50 ${recordingSource === "call" ? "bg-violet-600 text-white" : "bg-zinc-800 text-zinc-400 hover:text-white"}`}>Call · no prompt</button>
-        <button onClick={() => setRecordingSource("screen")} disabled={recording} aria-pressed={recordingSource === "screen"} className={`rounded-md px-2 py-1 text-[11px] font-medium transition-colors disabled:opacity-50 ${recordingSource === "screen" ? "bg-violet-600 text-white" : "bg-zinc-800 text-zinc-400 hover:text-white"}`}>Screen</button>
+        {!recording && !selected && <div className="pointer-events-none absolute inset-0 flex items-center justify-center px-4 text-center text-xs text-zinc-600">Record the visible canvas without a screen-share prompt</div>}
       </div>
 
       <div className="no-drag flex shrink-0 items-center gap-2 border-t border-zinc-800 bg-zinc-900 px-3 py-2">
-        <button onClick={() => void startCapture()} disabled={recording} className="rounded-lg bg-red-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-red-500 disabled:opacity-40">Record {recordingSource}</button>
+        <button onClick={() => void startCapture()} disabled={recording} className="rounded-lg bg-red-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-red-500 disabled:opacity-40">Record canvas</button>
         <button onClick={togglePause} disabled={!recording} className="rounded-lg bg-zinc-800 px-3 py-1.5 text-xs text-zinc-200 hover:bg-zinc-700 disabled:opacity-40">{paused ? "Resume" : "Pause"}</button>
         <button onClick={stopCapture} disabled={!recording} className="rounded-lg bg-zinc-800 px-3 py-1.5 text-xs text-zinc-200 hover:bg-zinc-700 disabled:opacity-40">Stop</button>
         {transferProgress !== undefined && <span className="ml-auto text-[10px] text-zinc-500">Sharing {Math.round(transferProgress * 100)}%</span>}
