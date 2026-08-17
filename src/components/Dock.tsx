@@ -165,7 +165,7 @@ export function DockButton({
   return (
     <button
       onClick={onToggle}
-      className={`no-drag transition-colors ${
+      className={`no-drag mr-5 transition-colors ${
         docked ? "text-violet-400 hover:text-violet-300" : "text-zinc-400 hover:text-white"
       }`}
       title={docked ? "Remove from dock" : "Add to dock"}

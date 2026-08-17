@@ -301,11 +301,11 @@ export function DraggablePanel({
           <button
             type="button"
             onClick={onMinimize}
-            className="no-drag absolute -right-2 -top-2 z-30 flex h-6 w-6 items-center justify-center rounded-full border border-zinc-600 bg-zinc-900 text-sm leading-none text-zinc-300 shadow-lg hover:border-violet-400 hover:text-white"
+            className="no-drag absolute right-7 top-1 z-30 flex h-6 w-4 items-center justify-center text-base leading-none text-zinc-400 transition-colors hover:text-white"
             title="Minimise to dock"
             aria-label="Minimise to dock"
           >
-            −
+            _
           </button>
         )}
 
