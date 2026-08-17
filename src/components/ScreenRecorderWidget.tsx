@@ -302,7 +302,7 @@ export function ScreenRecorderWidget({
   };
 
   return (
-    <div data-recording-exclude className="flex h-full min-h-0 flex-col overflow-hidden rounded-xl border border-zinc-700 bg-zinc-950 shadow-xl">
+    <div data-recording-exclude data-recording-widget className="flex h-full min-h-0 flex-col overflow-hidden rounded-xl border border-zinc-700 bg-zinc-950 shadow-xl">
       <div className="drag-handle flex shrink-0 cursor-grab items-center justify-between bg-zinc-900 px-3 py-2 active:cursor-grabbing">
         <div className="flex items-center gap-2 text-xs font-semibold text-zinc-300">
           <span className={`h-3 w-3 rounded-full ${recording && !paused ? "animate-pulse bg-red-500" : "bg-zinc-600"}`} />
