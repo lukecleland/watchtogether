@@ -1368,6 +1368,25 @@ export function Session({ roomCode, isHost }: SessionProps) {
 		const isFixed = id === 'local' || id === 'remote';
 		const remotePeerId = peerIdFromPanelId(id);
 		const panel = isFixed || remotePeerId ? null : dynamicPanels.find(p => p.id === id);
+		// Dock navigation is also an explicit request to surface the target.
+		// Raise it before the camera starts moving so overlapping panels cannot
+		// obscure it when the zoom animation arrives.
+		if (!positionTag) {
+			if (isFixed) {
+				bringToFront(id);
+			} else if (remotePeerId) {
+				const state = remotePanelStates[remotePeerId];
+				if (state) {
+					const next = { ...state, z: ++topZRef.current };
+					setRemotePanelStates(previous => ({ ...previous, [remotePeerId]: next }));
+					sendPanelUpdate(id, next);
+				}
+			} else if (panel) {
+				const next = { ...panel.state, z: ++topZRef.current };
+				setDynamicPanels(previous => previous.map(item => item.id === id ? { ...item, state: next } : item));
+				sendPanelUpdate(id, next);
+			}
+		}
 		const target = positionTag
 			? {
 					x: positionTag.x,
