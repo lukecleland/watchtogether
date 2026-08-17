@@ -41,6 +41,8 @@ export interface DockEntry {
   renamed?: boolean;
   /** Tagged by the other person and not yet acknowledged — pulses for attention. */
   pulsing?: boolean;
+  /** Locally hidden in the dock rather than currently visible on the canvas. */
+  minimized?: boolean;
 }
 
 interface DockProps {
@@ -295,7 +297,7 @@ export function Dock({ entries, onJump, onRemove, onRename, onPing, onParticipan
                   onParticipantDoubleClick(entry);
                 }
               }}
-              className="flex items-center gap-1.5 min-w-0"
+              className={`flex min-w-0 items-center gap-1.5 transition-opacity ${entry.minimized ? "opacity-80" : "opacity-100"}`}
               title={
                 entry.pulsing
                   ? `Go to ${entry.label} — just tagged by the other person`

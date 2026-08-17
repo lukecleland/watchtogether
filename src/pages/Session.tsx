@@ -1507,19 +1507,20 @@ export function Session({ roomCode, isHost }: SessionProps) {
 	const dockEntries: DockEntry[] = dockedIds.flatMap((id): DockEntry[] => {
 		const custom = customLabels[id];
 		const pulsing = pulsingIds.includes(id);
+		const minimized = minimizedIds.includes(id);
 		const positionTag = positionTags.find(tag => tag.id === id);
 		if (positionTag) {
-			return [{ id, type: 'position', label: custom ?? positionTag.label, renamed: !!custom, pulsing }];
+			return [{ id, type: 'position', label: custom ?? positionTag.label, renamed: !!custom, pulsing, minimized }];
 		}
 		if (id === 'local' || id === 'remote') {
 			const auto = id === 'local' ? 'You' : 'Guest';
-			return [{ id, type: id, label: custom ?? auto, renamed: !!custom, pulsing }];
+			return [{ id, type: id, label: custom ?? auto, renamed: !!custom, pulsing, minimized }];
 		}
 		const remotePeerId = peerIdFromPanelId(id);
 		if (remotePeerId) {
 			const index = remoteStreams.findIndex(remote => remote.peerId === remotePeerId);
 			if (index < 0) return [];
-			return [{ id, type: 'remote', label: custom ?? `Guest ${index + 1}`, renamed: !!custom, pulsing }];
+			return [{ id, type: 'remote', label: custom ?? `Guest ${index + 1}`, renamed: !!custom, pulsing, minimized }];
 		}
 		const panel = dynamicPanels.find(p => p.id === id);
 		if (!panel) return [];
@@ -1529,7 +1530,8 @@ export function Session({ roomCode, isHost }: SessionProps) {
 				type: panel.type,
 				label: custom ?? panelLabels[id] ?? fallbackLabel(panel),
 				renamed: !!custom,
-				pulsing
+				pulsing,
+				minimized
 			}
 		];
 	});
