@@ -82,6 +82,14 @@ body {
   cursor: auto;
 }
 
+button:not(:disabled) {
+  cursor: pointer;
+}
+
+button:disabled {
+  cursor: not-allowed;
+}
+
 /* Prism token palette for the transparent-text editor overlay. */
 .code-highlight {
   color: #d4d4d8;

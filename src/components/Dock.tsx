@@ -73,7 +73,7 @@ function DockIcon({ type }: { type: DockEntry["type"] }) {
     return <span className="h-3.5 w-3.5 shrink-0 rounded-full border-2 border-red-300 bg-red-500" />;
   }
   if (type === "code") {
-    return <span className="w-4 shrink-0 font-mono text-xs font-bold text-emerald-400">&lt;/&gt;</span>;
+    return <span className="mr-1 shrink-0 font-mono text-xs font-bold text-emerald-400">&lt;/&gt;</span>;
   }
   if (type === "position") {
     return (
