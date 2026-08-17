@@ -64,11 +64,12 @@ added. So the work is split:
       sustained notes as noise. Small change, big difference for jam sessions.
 - [x] **Mute toggles** — mic mute and camera off, implemented with track-level
       controls and video-track replacement where needed.
-- [x] **Session recording** — a recorder panel captures a user-selected screen
-      or window locally via `getDisplayMedia()` and `MediaRecorder`. Completed
-      clips transfer directly to peers, persist in local IndexedDB and have
-      synchronized selection and playback. Recording status remains visible at
-      room level.
+- [x] **Session recording** — a recorder panel can composite the room's existing
+      camera feeds and mix participant audio without opening the screen-share
+      picker, or capture a user-selected screen/window via `getDisplayMedia()`.
+      Completed clips transfer directly to peers, persist in local IndexedDB and
+      have synchronized selection and playback. Recording status remains visible
+      at room level.
 
 ### Canvas tools
 

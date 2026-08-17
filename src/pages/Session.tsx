@@ -2688,6 +2688,7 @@ export function Session({ roomCode, isHost }: SessionProps) {
 								title={customLabels[panel.id] ?? panelLabels[panel.id] ?? fallbackLabel(panel)}
 								id={panel.id}
 								dataConnection={dataConnection}
+								participantStreams={[...(localStream ? [localStream] : []), ...remoteStreams.map(item => item.stream)]}
 								recordings={panel.recordings}
 								initialPlayback={panel.playback}
 								onPlaybackChange={playback => updatePanelPlayback(panel.id, playback)}
