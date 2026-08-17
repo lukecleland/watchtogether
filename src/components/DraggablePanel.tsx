@@ -46,6 +46,9 @@ interface DraggablePanelProps {
   children: React.ReactNode;
   className?: string;
   excludeFromRecording?: boolean;
+  panelId?: string;
+  minimized?: boolean;
+  onMinimize?: () => void;
 }
 
 interface ResizeEdges {
@@ -123,6 +126,9 @@ export function DraggablePanel({
   children,
   className = "",
   excludeFromRecording = false,
+  panelId,
+  minimized = false,
+  onMinimize,
 }: DraggablePanelProps) {
   const nodeRef = useRef<HTMLDivElement>(null);
   // Always-current copy of state so resize closure doesn't go stale
@@ -284,7 +290,24 @@ export function DraggablePanel({
           onToggleDock?.();
         }}
       >
+        <div
+          data-panel-shell={panelId}
+          className="relative h-full w-full"
+          style={{ opacity: minimized ? 0 : 1, pointerEvents: minimized ? "none" : "auto" }}
+        >
         {children}
+
+        {onMinimize && !minimized && (
+          <button
+            type="button"
+            onClick={onMinimize}
+            className="no-drag absolute -right-2 -top-2 z-30 flex h-6 w-6 items-center justify-center rounded-full border border-zinc-600 bg-zinc-900 text-sm leading-none text-zinc-300 shadow-lg hover:border-violet-400 hover:text-white"
+            title="Minimise to dock"
+            aria-label="Minimise to dock"
+          >
+            −
+          </button>
+        )}
 
         {resizeHandles.map((handle) => (
           <div
@@ -302,6 +325,7 @@ export function DraggablePanel({
             }}
           />
         ))}
+        </div>
       </div>
     </Draggable>
   );

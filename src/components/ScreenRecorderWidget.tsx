@@ -47,7 +47,7 @@ function syncedTime(time: number, sentAt?: number): number {
 }
 
 async function createCanvasCapture(target: HTMLElement): Promise<CaptureSession> {
-  const { default: html2canvas } = await import("html2canvas");
+  const { default: html2canvas } = await import("html2canvas-pro");
   const canvas = document.createElement("canvas");
   const bounds = target.getBoundingClientRect();
   canvas.width = Math.max(1, Math.round(bounds.width));

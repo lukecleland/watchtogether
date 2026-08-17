@@ -119,7 +119,6 @@ export function AudioPlayer({
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
   const [volume, setVolume] = useState(initialPlayback?.volume ?? 1);
-  const [minimised, setMinimised] = useState(false);
   const [isDragOver, setIsDragOver] = useState(false);
   const initialPlaybackRef = useRef(initialPlayback);
   const onPlaybackChangeRef = useRef(onPlaybackChange);
@@ -191,7 +190,6 @@ export function AudioPlayer({
     onTrackChange?.(name);
     setCurrentTime(0);
     setIsPlaying(false);
-    setMinimised(false);
   }, [onTrackChange]);
 
   // Load the file whenever one turns up. It may be present at mount (a local
@@ -384,41 +382,6 @@ export function AudioPlayer({
           {onToggleDock && (
             <DockButton docked={docked} onToggle={onToggleDock} />
           )}
-          <button
-            onClick={() => setMinimised((m) => !m)}
-            className="text-zinc-400 hover:text-white transition-colors"
-            aria-label={minimised ? "Expand" : "Minimise"}
-          >
-            {minimised ? (
-              <svg
-                className="w-4 h-4"
-                fill="none"
-                stroke="currentColor"
-                viewBox="0 0 24 24"
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={2}
-                  d="M4 8h16M4 16h16"
-                />
-              </svg>
-            ) : (
-              <svg
-                className="w-4 h-4"
-                fill="none"
-                stroke="currentColor"
-                viewBox="0 0 24 24"
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={2}
-                  d="M20 12H4"
-                />
-              </svg>
-            )}
-          </button>
           {onClose && (
             <button
               onClick={onClose}
@@ -443,7 +406,7 @@ export function AudioPlayer({
         </div>
       </div>
 
-      {!minimised && (
+      {(
         <div className="flex flex-col flex-1 gap-2 px-3 py-2 min-w-0">
           {transferProgress !== undefined && !fileName ? (
             /* ── Arriving over the data channel ── */
