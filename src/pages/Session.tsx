@@ -1329,8 +1329,14 @@ export function Session({ roomCode, isHost }: SessionProps) {
 			const animation = target.panel.animate([
 				{ transform: 'translate(0, 0) scale(1)', opacity: 1 },
 				{ transform: `translate(${target.x}px, ${target.y}px) scale(0.05)`, opacity: 0 }
-			], { duration: 300, easing: 'cubic-bezier(0.4, 0, 1, 1)' });
-			void animation.finished.then(() => setMinimizedIds(previous => previous.includes(id) ? previous : [...previous, id]));
+			], { duration: 300, easing: 'cubic-bezier(0.4, 0, 1, 1)', fill: 'forwards' });
+			void animation.finished.then(() => {
+				setMinimizedIds(previous => previous.includes(id) ? previous : [...previous, id]);
+				// Keep the collapsed animation frame visible until React has painted
+				// the panel's persistent hidden state underneath it. Cancelling the
+				// effect immediately causes a one-frame full-size flash.
+				requestAnimationFrame(() => requestAnimationFrame(() => animation.cancel()));
+			}).catch(() => {});
 		}));
 	};
 
@@ -1362,6 +1368,25 @@ export function Session({ roomCode, isHost }: SessionProps) {
 		const isFixed = id === 'local' || id === 'remote';
 		const remotePeerId = peerIdFromPanelId(id);
 		const panel = isFixed || remotePeerId ? null : dynamicPanels.find(p => p.id === id);
+		// Dock navigation is also an explicit request to surface the target.
+		// Raise it before the camera starts moving so overlapping panels cannot
+		// obscure it when the zoom animation arrives.
+		if (!positionTag) {
+			if (isFixed) {
+				bringToFront(id);
+			} else if (remotePeerId) {
+				const state = remotePanelStates[remotePeerId];
+				if (state) {
+					const next = { ...state, z: ++topZRef.current };
+					setRemotePanelStates(previous => ({ ...previous, [remotePeerId]: next }));
+					sendPanelUpdate(id, next);
+				}
+			} else if (panel) {
+				const next = { ...panel.state, z: ++topZRef.current };
+				setDynamicPanels(previous => previous.map(item => item.id === id ? { ...item, state: next } : item));
+				sendPanelUpdate(id, next);
+			}
+		}
 		const target = positionTag
 			? {
 					x: positionTag.x,
@@ -1482,19 +1507,20 @@ export function Session({ roomCode, isHost }: SessionProps) {
 	const dockEntries: DockEntry[] = dockedIds.flatMap((id): DockEntry[] => {
 		const custom = customLabels[id];
 		const pulsing = pulsingIds.includes(id);
+		const minimized = minimizedIds.includes(id);
 		const positionTag = positionTags.find(tag => tag.id === id);
 		if (positionTag) {
-			return [{ id, type: 'position', label: custom ?? positionTag.label, renamed: !!custom, pulsing }];
+			return [{ id, type: 'position', label: custom ?? positionTag.label, renamed: !!custom, pulsing, minimized }];
 		}
 		if (id === 'local' || id === 'remote') {
 			const auto = id === 'local' ? 'You' : 'Guest';
-			return [{ id, type: id, label: custom ?? auto, renamed: !!custom, pulsing }];
+			return [{ id, type: id, label: custom ?? auto, renamed: !!custom, pulsing, minimized }];
 		}
 		const remotePeerId = peerIdFromPanelId(id);
 		if (remotePeerId) {
 			const index = remoteStreams.findIndex(remote => remote.peerId === remotePeerId);
 			if (index < 0) return [];
-			return [{ id, type: 'remote', label: custom ?? `Guest ${index + 1}`, renamed: !!custom, pulsing }];
+			return [{ id, type: 'remote', label: custom ?? `Guest ${index + 1}`, renamed: !!custom, pulsing, minimized }];
 		}
 		const panel = dynamicPanels.find(p => p.id === id);
 		if (!panel) return [];
@@ -1504,7 +1530,8 @@ export function Session({ roomCode, isHost }: SessionProps) {
 				type: panel.type,
 				label: custom ?? panelLabels[id] ?? fallbackLabel(panel),
 				renamed: !!custom,
-				pulsing
+				pulsing,
+				minimized
 			}
 		];
 	});
@@ -1893,9 +1920,9 @@ export function Session({ roomCode, isHost }: SessionProps) {
 	useEffect(() => {
 		const onWheel = (e: WheelEvent) => {
 			e.preventDefault();
-			const factor = e.deltaY < 0 ? 1.08 : 1 / 1.08;
+			const factor = e.deltaY < 0 ? 1.04 : 1 / 1.04;
 			setCanvas(prev => {
-				const s = Math.min(4, prev.scale * factor);
+				const s = Math.max(0.25, Math.min(4, prev.scale * factor));
 				return {
 					x: e.clientX - ((e.clientX - prev.x) / prev.scale) * s,
 					y: e.clientY - ((e.clientY - prev.y) / prev.scale) * s,
@@ -2202,7 +2229,7 @@ export function Session({ roomCode, isHost }: SessionProps) {
 				{/* Zoom controls */}
 				<div className="flex items-center gap-0.5">
 					<button
-						onClick={() => setCanvas(c => ({ ...c, scale: c.scale / 1.25 }))}
+						onClick={() => setCanvas(c => ({ ...c, scale: Math.max(0.25, c.scale / 1.1) }))}
 						className="w-7 h-7 flex items-center justify-center rounded text-zinc-400 hover:text-white hover:bg-zinc-700 transition-colors text-base leading-none"
 						title="Zoom out">
 						−
@@ -2214,7 +2241,7 @@ export function Session({ roomCode, isHost }: SessionProps) {
 						{Math.round(canvas.scale * 100)}%
 					</button>
 					<button
-						onClick={() => setCanvas(c => ({ ...c, scale: Math.min(4, c.scale * 1.25) }))}
+						onClick={() => setCanvas(c => ({ ...c, scale: Math.min(4, c.scale * 1.1) }))}
 						className="w-7 h-7 flex items-center justify-center rounded text-zinc-400 hover:text-white hover:bg-zinc-700 transition-colors text-base leading-none"
 						title="Zoom in">
 						+
@@ -2655,11 +2682,11 @@ export function Session({ roomCode, isHost }: SessionProps) {
 					)
 				)}
 				{localStream && localStream.getTracks().length > 0 && (
-					<DraggablePanel panelId="local" minimized={minimizedIds.includes('local')} onMinimize={() => minimizePanel('local')} state={fixedPanels.local} {...makePanelHandlers('local')} onToggleDock={() => toggleDock('local')} minWidth={200} minHeight={120} scale={canvas.scale} className="z-10">
+					<DraggablePanel panelId="local" minimized={minimizedIds.includes('local')} onMinimize={() => minimizePanel('local')} minimizeControlHandled state={fixedPanels.local} {...makePanelHandlers('local')} onToggleDock={() => toggleDock('local')} minWidth={200} minHeight={120} scale={canvas.scale} className="z-10">
 						{zoomTagHandle('local', 'You')}
 						{/* No onToggleDock: participants are permanently docked, so a
 						    bookmark toggle here would be a button that does nothing */}
-						<VideoPanel stream={localStream} label={customLabels.local ?? 'You'} muted docked={dockedIds.includes('local')} localControls microphoneEnabled={microphoneEnabled} cameraEnabled={cameraEnabled} onToggleMicrophone={toggleMicrophone} onToggleCamera={() => void toggleCamera()} />
+						<VideoPanel stream={localStream} label={customLabels.local ?? 'You'} muted docked={dockedIds.includes('local')} localControls microphoneEnabled={microphoneEnabled} cameraEnabled={cameraEnabled} onToggleMicrophone={toggleMicrophone} onToggleCamera={() => void toggleCamera()} onMinimize={() => minimizePanel('local')} />
 					</DraggablePanel>
 				)}
 
@@ -2674,6 +2701,7 @@ export function Session({ roomCode, isHost }: SessionProps) {
 							panelId={panelId}
 							minimized={minimizedIds.includes(panelId)}
 							onMinimize={() => minimizePanel(panelId)}
+							minimizeControlHandled
 							state={state}
 							onLocalUpdate={next => setRemotePanelStates(prev => ({ ...prev, [peerId]: next }))}
 							onSyncUpdate={next => sendPanelUpdate(panelId, next)}
@@ -2693,6 +2721,7 @@ export function Session({ roomCode, isHost }: SessionProps) {
 								stream={stream}
 								label={customLabels[panelId] ?? label}
 								docked={dockedIds.includes(panelId)}
+								onMinimize={() => minimizePanel(panelId)}
 							/>
 						</DraggablePanel>
 					);
@@ -2704,6 +2733,7 @@ export function Session({ roomCode, isHost }: SessionProps) {
 						panelId={panel.id}
 						minimized={minimizedIds.includes(panel.id)}
 						onMinimize={() => minimizePanel(panel.id)}
+						minimizeControlHandled={panel.type === 'youtube' || panel.type === 'code'}
 						state={panel.state}
 						excludeFromRecording={panel.type === 'recorder'}
 						{...makeDynamicPanelHandlers(panel.id)}
@@ -2722,7 +2752,8 @@ export function Session({ roomCode, isHost }: SessionProps) {
 								onToggleDock={() => toggleDock(panel.id)}
 							/>
 						) : panel.type === 'code' ? (
-							<CodeWidget
+								<CodeWidget
+									onMinimize={() => minimizePanel(panel.id)}
 								title={customLabels[panel.id] ?? panelLabels[panel.id] ?? fallbackLabel(panel)}
 								code={panel.code ?? { text: '', language: 'text' }}
 								onChange={next => updateCode(panel.id, next)}
@@ -2732,6 +2763,7 @@ export function Session({ roomCode, isHost }: SessionProps) {
 							/>
 						) : panel.type === 'youtube' ? (
 							<YoutubeWidget
+								onMinimize={() => minimizePanel(panel.id)}
 								title={customLabels[panel.id] ?? panelLabels[panel.id] ?? fallbackLabel(panel)}
 								id={panel.id}
 								dataConnection={dataConnection}

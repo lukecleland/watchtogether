@@ -13,6 +13,7 @@ interface VideoPanelProps {
   cameraEnabled?: boolean;
   onToggleMicrophone?: () => void;
   onToggleCamera?: () => void;
+  onMinimize?: () => void;
 }
 
 export function VideoPanel({
@@ -26,6 +27,7 @@ export function VideoPanel({
   cameraEnabled = true,
   onToggleMicrophone,
   onToggleCamera,
+  onMinimize,
 }: VideoPanelProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
 
@@ -70,7 +72,7 @@ export function VideoPanel({
   return (
     <div className="flex flex-col h-full bg-zinc-900 rounded-xl overflow-hidden shadow-2xl border border-zinc-800">
       {/* Drag handle bar */}
-      <div className="drag-handle flex items-center justify-between gap-2 px-3 py-1.5 bg-zinc-800/80 cursor-grab active:cursor-grabbing select-none shrink-0">
+      <div className="drag-handle flex items-center gap-2 px-3 py-1.5 bg-zinc-800/80 cursor-grab active:cursor-grabbing select-none shrink-0">
         <div className="flex items-center gap-2 min-w-0">
           <svg
             className="w-3 h-3 text-zinc-500 shrink-0"
@@ -101,6 +103,7 @@ export function VideoPanel({
           )}
           {onToggleDock && <DockButton docked={docked} onToggle={onToggleDock} />}
         </div>
+        {onMinimize && <button onClick={onMinimize} className="no-drag ml-auto flex h-5 w-4 items-center justify-center text-base leading-none text-zinc-400 hover:text-white" title="Minimise to dock" aria-label="Minimise to dock">_</button>}
       </div>
 
       {/* Video */}

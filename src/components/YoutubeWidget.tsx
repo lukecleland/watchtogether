@@ -32,6 +32,7 @@ interface YoutubeWidgetProps {
   /** Whether this panel currently has a dock shortcut. */
   docked?: boolean;
   onToggleDock?: () => void;
+  onMinimize?: () => void;
   /** Reports the loaded video's title so the parent can label the dock chip. */
   onTitleChange?: (title: string) => void;
   initialPlayback?: PanelPlayback;
@@ -76,6 +77,7 @@ export function YoutubeWidget({
   spatialVolume = 1,
   docked = false,
   onToggleDock,
+  onMinimize,
   onTitleChange,
   initialPlayback,
   onPlaybackChange,
@@ -237,8 +239,9 @@ export function YoutubeWidget({
         </div>
         <div className="flex items-center gap-1">
           {onToggleDock && (
-            <DockButton docked={docked} onToggle={onToggleDock} />
+            <DockButton docked={docked} onToggle={onToggleDock} reserveMinimizeSlot={false} />
           )}
+          {onMinimize && <button onClick={onMinimize} className="no-drag flex h-5 w-4 items-center justify-center text-base leading-none text-zinc-400 hover:text-white" title="Minimise to dock" aria-label="Minimise to dock">_</button>}
           {onClose && (
             <button
               onClick={onClose}

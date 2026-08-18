@@ -90,6 +90,10 @@ button:disabled {
   cursor: not-allowed;
 }
 
+[data-recording-widget] :is(button:not(:disabled), a[download]) {
+  cursor: pointer;
+}
+
 /* Prism token palette for the transparent-text editor overlay. */
 .code-highlight {
   color: #d4d4d8;

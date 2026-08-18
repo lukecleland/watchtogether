@@ -41,6 +41,8 @@ export interface DockEntry {
   renamed?: boolean;
   /** Tagged by the other person and not yet acknowledged — pulses for attention. */
   pulsing?: boolean;
+  /** Locally hidden in the dock rather than currently visible on the canvas. */
+  minimized?: boolean;
 }
 
 interface DockProps {
@@ -158,14 +160,16 @@ function DockIcon({ type }: { type: DockEntry["type"] }) {
 export function DockButton({
   docked,
   onToggle,
+  reserveMinimizeSlot = true,
 }: {
   docked: boolean;
   onToggle: () => void;
+  reserveMinimizeSlot?: boolean;
 }) {
   return (
     <button
       onClick={onToggle}
-      className={`no-drag transition-colors ${
+      className={`no-drag transition-colors ${reserveMinimizeSlot ? "mr-5" : ""} ${
         docked ? "text-violet-400 hover:text-violet-300" : "text-zinc-400 hover:text-white"
       }`}
       title={docked ? "Remove from dock" : "Add to dock"}
@@ -293,7 +297,7 @@ export function Dock({ entries, onJump, onRemove, onRename, onPing, onParticipan
                   onParticipantDoubleClick(entry);
                 }
               }}
-              className="flex items-center gap-1.5 min-w-0"
+              className={`flex min-w-0 items-center gap-1.5 transition-opacity ${entry.minimized ? "opacity-80" : "opacity-100"}`}
               title={
                 entry.pulsing
                   ? `Go to ${entry.label} — just tagged by the other person`
