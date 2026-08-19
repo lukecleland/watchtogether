@@ -180,6 +180,19 @@ function configuredIceServers(): RTCIceServer[] {
   const credential = import.meta.env.VITE_TURN_CREDENTIAL?.trim();
   if (urls?.length && username && credential) {
     servers.push({ urls, username, credential });
+  } else {
+    // Supplying `config` to PeerJS replaces its complete default ICE config.
+    // Keep PeerJS Cloud's public relay as a last-resort path when a deployment
+    // has not supplied dedicated TURN credentials. STUN-only works on a local
+    // network but fails for many cellular, corporate and symmetric-NAT pairs.
+    servers.push({
+      urls: [
+        "turn:eu-0.turn.peerjs.com:3478",
+        "turn:us-0.turn.peerjs.com:3478",
+      ],
+      username: "peerjs",
+      credential: "peerjsp",
+    });
   }
   return servers;
 }
@@ -364,9 +377,29 @@ export function usePeer({
       let heartbeatConfirmed = false;
       let resumedFromBackground = false;
       let heartbeat: ReturnType<typeof setInterval> | null = null;
+      // PeerJS can leave a data connection in its pre-open state indefinitely
+      // when ICE has no viable route. Give recovery a deterministic trigger so
+      // a joiner can retry/claim the room instead of displaying Connecting…
+      // forever.
+      let negotiationTimer: ReturnType<typeof setTimeout> | null = setTimeout(
+        () => {
+          negotiationTimer = null;
+          if (
+            active &&
+            dataConnections.get(connection.peer) === connection &&
+            !connection.open
+          ) {
+            connection.close();
+            remove();
+          }
+        },
+        20_000,
+      );
 
       connection.on("open", () => {
         if (!active || dataConnections.get(connection.peer) !== connection) return;
+        if (negotiationTimer) clearTimeout(negotiationTimer);
+        negotiationTimer = null;
 
         if (
           role === "owner" &&
@@ -439,6 +472,8 @@ export function usePeer({
       });
 
       const remove = () => {
+        if (negotiationTimer) clearTimeout(negotiationTimer);
+        negotiationTimer = null;
         if (heartbeat) clearInterval(heartbeat);
         heartbeat = null;
         if (!active || dataConnections.get(connection.peer) !== connection) return;
